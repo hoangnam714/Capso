@@ -1,6 +1,7 @@
 // App/Sources/History/HistoryCoordinator.swift
 import AppKit
 import AVFoundation
+import ImageIO
 import Observation
 import AnnotationKit
 import CaptureKit
@@ -489,100 +490,123 @@ final class HistoryCoordinator {
 
     /// Writes base + rendered PNGs, annotation sidecar, and refreshes the
     /// history thumbnail so reopening Annotate restores drawable objects.
+    /// Creates a new history entry when `entryID` is nil or not yet inserted.
+    @discardableResult
     func persistAnnotationEdit(
-        entryID: UUID,
+        entryID: UUID? = nil,
         baseImage: CGImage,
         renderedImage: CGImage,
-        sidecar: AnnotationSidecar
-    ) {
-        guard settings.historyEnabled, let store else { return }
+        sidecar: AnnotationSidecar,
+        sourceAppName: String? = nil,
+        sourceWindowTitle: String? = nil,
+        date: Date = Date()
+    ) -> UUID? {
+        guard settings.historyEnabled, let store else {
+            NSLog("Capso: skip annotation persist (history disabled or store unavailable)")
+            return nil
+        }
 
+        let entryID = entryID ?? UUID()
         let entryDir = store.entriesDirectory
             .appendingPathComponent(entryID.uuidString, isDirectory: true)
         let annotationName = Self.annotationSidecarFileName
         let sourceName = Self.annotationSourceFileName
+        let fullName = "capture.png"
+        let thumbName = "thumbnail.jpg"
 
-        guard let baseData = ImageUtilities.pngData(from: baseImage),
-              let renderedData = ImageUtilities.pngData(from: renderedImage),
-              let sidecarData = try? sidecar.encoded() else {
-            print("Failed to encode annotation edit for \(entryID)")
-            return
+        let sidecarData: Data
+        do {
+            sidecarData = try sidecar.encoded()
+        } catch {
+            NSLog("Capso: annotation sidecar encode failed for \(entryID): \(error)")
+            return nil
+        }
+
+        guard let baseData = ImageUtilities.pngData(from: baseImage)
+                ?? Self.pngDataViaDestination(from: baseImage) else {
+            NSLog("Capso: failed to encode annotation base image for \(entryID)")
+            return nil
+        }
+        guard let renderedData = ImageUtilities.pngData(from: renderedImage)
+                ?? Self.pngDataViaDestination(from: renderedImage) else {
+            NSLog("Capso: failed to encode annotation rendered image for \(entryID)")
+            return nil
         }
         let thumbData = ThumbnailGenerator.generateThumbnail(from: renderedImage)
-        let renderedWidth = renderedImage.width
-        let renderedHeight = renderedImage.height
-        let renderedByteCount = Int64(renderedData.count)
 
-        Task.detached(priority: .utility) {
-            do {
-                let fm = FileManager.default
-                try fm.createDirectory(at: entryDir, withIntermediateDirectories: true)
-
-                try baseData.write(to: entryDir.appendingPathComponent(sourceName), options: .atomic)
-                try sidecarData.write(
-                    to: entryDir.appendingPathComponent(annotationName),
+        do {
+            try FileManager.default.createDirectory(at: entryDir, withIntermediateDirectories: true)
+            // Sidecar first so reopen can recover even if a later write fails.
+            try sidecarData.write(
+                to: entryDir.appendingPathComponent(annotationName),
+                options: .atomic
+            )
+            try baseData.write(
+                to: entryDir.appendingPathComponent(sourceName),
+                options: .atomic
+            )
+            try renderedData.write(
+                to: entryDir.appendingPathComponent(fullName),
+                options: .atomic
+            )
+            if let thumbData {
+                try thumbData.write(
+                    to: entryDir.appendingPathComponent(thumbName),
                     options: .atomic
                 )
-
-                // Resolve the full-image / thumbnail names from the DB when
-                // available; fall back to the conventional capture filenames
-                // so we still persist while saveCapture is racing to insert.
-                var fullName = "capture.png"
-                var thumbName = "thumbnail.jpg"
-                var existing: HistoryEntry?
-                for _ in 0..<30 {
-                    existing = try? store.fetch(id: entryID)
-                    if let existing {
-                        fullName = existing.fullImageFileName
-                        thumbName = existing.thumbnailFileName
-                        break
-                    }
-                    try await Task.sleep(nanoseconds: 100_000_000)
-                }
-
-                try renderedData.write(
-                    to: entryDir.appendingPathComponent(fullName),
-                    options: .atomic
-                )
-                if let thumbData {
-                    try thumbData.write(
-                        to: entryDir.appendingPathComponent(thumbName),
-                        options: .atomic
-                    )
-                }
-
-                if let existing {
-                    let updated = HistoryEntry(
-                        id: existing.id,
-                        createdAt: existing.createdAt,
-                        captureMode: existing.captureMode,
-                        imageWidth: renderedWidth,
-                        imageHeight: renderedHeight,
-                        sourceAppName: existing.sourceAppName,
-                        sourceAppBundleID: existing.sourceAppBundleID,
-                        sourceWindowTitle: existing.sourceWindowTitle,
-                        thumbnailFileName: thumbName,
-                        fullImageFileName: fullName,
-                        annotationFileName: annotationName,
-                        fileSize: renderedByteCount,
-                        cloudURL: existing.cloudURL
-                    )
-                    try store.update(updated)
-                } else {
-                    print("Annotation sidecar written but history entry \(entryID) was not found")
-                }
-
-                await MainActor.run {
-                    self.loadEntries()
-                }
-            } catch {
-                print("Failed to persist annotation edit: \(error)")
             }
+        } catch {
+            NSLog("Capso: failed writing annotation files for \(entryID): \(error)")
+            return nil
+        }
+
+        let existing = try? store.fetch(id: entryID)
+        let updated = HistoryEntry(
+            id: entryID,
+            createdAt: existing?.createdAt ?? date,
+            captureMode: existing?.captureMode ?? .area,
+            imageWidth: renderedImage.width,
+            imageHeight: renderedImage.height,
+            sourceAppName: existing?.sourceAppName ?? sourceAppName,
+            sourceAppBundleID: existing?.sourceAppBundleID,
+            sourceWindowTitle: existing?.sourceWindowTitle ?? sourceWindowTitle,
+            thumbnailFileName: existing?.thumbnailFileName ?? thumbName,
+            fullImageFileName: existing?.fullImageFileName ?? fullName,
+            annotationFileName: annotationName,
+            fileSize: Int64(renderedData.count),
+            cloudURL: existing?.cloudURL
+        )
+
+        do {
+            if existing != nil {
+                try store.update(updated)
+            } else {
+                try store.insert(updated)
+            }
+            loadEntries()
+            NSLog(
+                "Capso: persisted \(sidecar.objects.count) annotation object(s) for \(entryID.uuidString)"
+            )
+            return entryID
+        } catch {
+            NSLog("Capso: history DB update failed for \(entryID) (files were written): \(error)")
+            loadEntries()
+            return entryID
         }
     }
 
     private static let annotationSidecarFileName = "annotations.json"
     private static let annotationSourceFileName = "source.png"
+
+    private static func pngDataViaDestination(from image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            data, "public.png" as CFString, 1, nil
+        ) else { return nil }
+        CGImageDestinationAddImage(dest, image, nil)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
+    }
 
     private func loadCGImage(from url: URL) -> CGImage? {
         guard let nsImage = NSImage(contentsOf: url) else { return nil }

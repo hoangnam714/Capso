@@ -26,6 +26,8 @@ final class CaptureCoordinator {
     private var quickAccessPreviewWindow: QuickAccessPreviewWindow?
     private var annotationWindow: AnnotationEditorWindow?
     private var inlineAnnotationWindow: InlineAnnotationEditorWindow?
+    /// History entry tied to the open annotation editor (Save/Copy write sidecar here).
+    private var activeAnnotationHistoryEntryID: UUID?
     private var allInOneToolbarWindow: CaptureAllInOneToolbarWindow?
     private var pinnedControllers: [PinnedScreenshotController] = []
     /// Opaque freeze-screen windows (one per display) that replace the live desktop
@@ -1377,6 +1379,7 @@ final class CaptureCoordinator {
         historyEntryID: UUID? = nil
     ) {
         let screen = anchorScreen ?? NSScreen.main
+        activeAnnotationHistoryEntryID = historyEntryID
 
         inlineAnnotationWindow?.close()
         inlineAnnotationWindow = nil
@@ -1385,33 +1388,37 @@ final class CaptureCoordinator {
             sidecar: sidecar,
             anchorScreen: screen,
             onSave: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
-                self?.saveRenderedImage(
+                guard let self else { return }
+                self.saveRenderedImage(
                     rendered,
                     sourceAppName: sourceAppName,
                     sourceWindowTitle: sourceWindowTitle,
                     date: date
                 )
-                if let historyEntryID {
-                    self?.historyCoordinator?.persistAnnotationEdit(
-                        entryID: historyEntryID,
-                        baseImage: source,
-                        renderedImage: rendered,
-                        sidecar: document.exportSidecar()
-                    )
-                }
-                self?.annotationWindow = nil
+                self.persistOpenAnnotation(
+                    rendered: rendered,
+                    source: source,
+                    document: document,
+                    sourceAppName: sourceAppName,
+                    sourceWindowTitle: sourceWindowTitle,
+                    date: date
+                )
+                self.activeAnnotationHistoryEntryID = nil
+                self.annotationWindow = nil
             },
             onCopy: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
-                self?.copyRenderedImage(rendered)
-                if let historyEntryID {
-                    self?.historyCoordinator?.persistAnnotationEdit(
-                        entryID: historyEntryID,
-                        baseImage: source,
-                        renderedImage: rendered,
-                        sidecar: document.exportSidecar()
-                    )
-                }
-                self?.annotationWindow = nil
+                guard let self else { return }
+                self.copyRenderedImage(rendered)
+                self.persistOpenAnnotation(
+                    rendered: rendered,
+                    source: source,
+                    document: document,
+                    sourceAppName: sourceAppName,
+                    sourceWindowTitle: sourceWindowTitle,
+                    date: date
+                )
+                self.activeAnnotationHistoryEntryID = nil
+                self.annotationWindow = nil
             },
             onPin: { [weak self] (rendered: CGImage, anchor: CGRect?) in
                 self?.pinRenderedImage(
@@ -1421,13 +1428,39 @@ final class CaptureCoordinator {
                     sourceWindowTitle: sourceWindowTitle,
                     date: date
                 )
+                self?.activeAnnotationHistoryEntryID = nil
                 self?.annotationWindow = nil
             },
             onClose: { [weak self] in
+                self?.activeAnnotationHistoryEntryID = nil
                 self?.annotationWindow = nil
             }
         )
         annotationWindow?.show()
+    }
+
+    /// Always writes annotation objects into History so reopen can continue editing.
+    private func persistOpenAnnotation(
+        rendered: CGImage,
+        source: CGImage,
+        document: AnnotationDocument,
+        sourceAppName: String?,
+        sourceWindowTitle: String?,
+        date: Date
+    ) {
+        let entryID = activeAnnotationHistoryEntryID
+        let persistedID = historyCoordinator?.persistAnnotationEdit(
+            entryID: entryID,
+            baseImage: source,
+            renderedImage: rendered,
+            sidecar: document.exportSidecar(),
+            sourceAppName: sourceAppName,
+            sourceWindowTitle: sourceWindowTitle,
+            date: date
+        )
+        if let persistedID {
+            activeAnnotationHistoryEntryID = persistedID
+        }
     }
 
     func annotateFromClipboard() {

@@ -438,9 +438,6 @@ private struct InlineAnnotationEditorView: View {
     }
 
     private func copy() {
-        guard !interactionState.shouldSuppressCopyAction else {
-            return
-        }
         commitEditingTrigger += 1
         DispatchQueue.main.async {
             if let rendered = renderedOutputImage() {

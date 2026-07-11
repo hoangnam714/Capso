@@ -591,9 +591,8 @@ struct AnnotationEditorView: View {
     }
 
     private func copy() {
-        guard !interactionState.shouldSuppressCopyAction else {
-            return
-        }
+        // Toolbar / explicit Copy must always export the image. Suppression is
+        // only for ⌘C while dragging or editing so it doesn't steal object-clipboard.
         commitEditingTrigger += 1
         DispatchQueue.main.async {
             if let rendered = renderedOutputImage() {
