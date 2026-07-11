@@ -1,0 +1,100 @@
+# project.yml
+name: Capso
+options:
+  bundleIdPrefix: com.awesomemacapps
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "26.0"
+  generateEmptyDirectories: true
+  groupSortPosition: top
+  defaultLocalization: en
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    DEVELOPMENT_TEAM: "T247WTJV77"
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  SharedKit:
+    path: Packages/SharedKit
+  CaptureKit:
+    path: Packages/CaptureKit
+  RecordingKit:
+    path: Packages/RecordingKit
+  CameraKit:
+    path: Packages/CameraKit
+  AnnotationKit:
+    path: Packages/AnnotationKit
+  OCRKit:
+    path: Packages/OCRKit
+  TranslationKit:
+    path: Packages/TranslationKit
+  ExportKit:
+    path: Packages/ExportKit
+  EffectsKit:
+    path: Packages/EffectsKit
+  EditorKit:
+    path: Packages/EditorKit
+  HistoryKit:
+    path: Packages/HistoryKit
+  ShareKit:
+    path: Packages/ShareKit
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    exactVersion: "2.2.1"
+  Defaults:
+    url: https://github.com/sindresorhus/Defaults
+    exactVersion: "9.0.6"
+  LaunchAtLogin:
+    url: https://github.com/sindresorhus/LaunchAtLogin-Modern
+    exactVersion: "1.1.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: "2.9.1"
+
+targets:
+  Capso:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/Sources
+      - path: App/Resources
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.awesomemacapps.capso
+        INFOPLIST_FILE: App/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Entitlements/Capso.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        PRODUCT_NAME: Capso
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - package: SharedKit
+      - package: CaptureKit
+      - package: RecordingKit
+      - package: CameraKit
+      - package: AnnotationKit
+      - package: OCRKit
+      - package: TranslationKit
+      - package: ExportKit
+      - package: EffectsKit
+      - package: EditorKit
+      - package: HistoryKit
+      - package: ShareKit
+      - package: KeyboardShortcuts
+      - package: Defaults
+      - package: LaunchAtLogin
+      - package: Sparkle
+    entitlements:
+      path: App/Entitlements/Capso.entitlements
+      properties:
+        com.apple.security.device.camera: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.network.client: true

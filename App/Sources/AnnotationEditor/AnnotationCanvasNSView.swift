@@ -1,0 +1,1293 @@
+// App/Sources/AnnotationEditor/AnnotationCanvasNSView.swift
+import AppKit
+import CoreGraphics
+import AnnotationKit
+
+/// Which visible handle is being dragged for resize or path adjustment.
+private enum ResizeHandle {
+    case topLeft, topRight, bottomLeft, bottomRight
+    case top, bottom, left, right
+    case pathStart, pathEnd, pathControl
+
+    var textResizeHandle: TextResizeHandle? {
+        switch self {
+        case .topLeft:
+            .topLeft
+        case .topRight:
+            .topRight
+        case .bottomLeft:
+            .bottomLeft
+        case .bottomRight:
+            .bottomRight
+        case .top, .bottom, .left, .right, .pathStart, .pathEnd, .pathControl:
+            nil
+        }
+    }
+}
+
+private protocol PathEditableAnnotation: AnnotationObject {
+    var start: CGPoint { get set }
+    var end: CGPoint { get set }
+    var controlPoint: CGPoint? { get set }
+}
+
+extension LineObject: PathEditableAnnotation {}
+extension ArrowObject: PathEditableAnnotation {}
+
+@MainActor
+final class AnnotationCanvasNSView: NSView {
+    var document: AnnotationDocument?
+    var sourceImage: CGImage?
+    var currentTool: AnnotationTool = .select
+    var currentStyle: StrokeStyle = StrokeStyle() {
+        didSet { syncEditorStyle() }
+    }
+    var redactionMode: RedactionMode = .pixelate
+    /// Font size used for newly created TextObjects and propagated live to
+    /// the inline editor. Pushed from SwiftUI by AnnotationCanvasView.
+    var currentTextFontSize: CGFloat = 48 {
+        didSet { textEditor?.fontSize = currentTextFontSize }
+    }
+    /// Optional text effects for newly created text and active inline edits.
+    var currentTextFillColor: AnnotationColor? {
+        didSet {
+            textEditor?.fillColor = currentTextFillColor?.nsColor.withAlphaComponent(0.5)
+            needsDisplay = true
+        }
+    }
+    var currentTextOutlineColor: AnnotationColor? {
+        didSet {
+            textEditor?.boxOutlineColor = currentTextOutlineColor?.nsColor
+            needsDisplay = true
+        }
+    }
+    var currentTextGlyphStrokeColor: AnnotationColor? {
+        didSet {
+            textEditor?.glyphStrokeColor = currentTextGlyphStrokeColor?.nsColor
+            needsDisplay = true
+        }
+    }
+    var onDocumentChanged: (() -> Void)?
+    var onObjectCreated: (() -> Void)?
+    /// Fired when an inline text edit begins. Passes the effective fontSize
+    /// and text effect states, so SwiftUI can sync toolbar state.
+    var onTextEditingStarted: ((CGFloat, Bool, Bool, Bool) -> Void)?
+    /// Fired on commit / cancel.
+    var onTextEditingEnded: (() -> Void)?
+    var onInteractionChanged: ((Bool) -> Void)?
+
+    func commitTextEditingIfNeeded() {
+        commitTextEditing()
+    }
+
+    var zoomScale: CGFloat = 1.0 {
+        didSet {
+            guard zoomScale != oldValue, let editor = textEditor else { return }
+            editor.zoomScale = zoomScale
+            repositionEditor()
+        }
+    }
+
+    private var dragStart: CGPoint?
+    private var dragCurrent: CGPoint?
+    private var isDragging = false {
+        didSet {
+            guard isDragging != oldValue else { return }
+            onInteractionChanged?(isDragging)
+        }
+    }
+    private var dragObjectID: ObjectID?
+    /// True when the current drag is repositioning an existing object (any tool).
+    private var isMovingObject = false
+    private var activeResizeHandle: ResizeHandle?
+    private var resizeOriginalBounds: CGRect?
+    private var resizeOriginalFreehandPoints: [CGPoint]?
+    private var resizeOriginalEndpoints: (start: CGPoint, end: CGPoint)?
+    private var resizeOriginalLineControlPoint: CGPoint?
+    /// Original fontSize captured when a TextObject resize drag begins.
+    /// Text uses intrinsic sizing (bounds derived from fontSize), so we scale
+    /// fontSize from this original value — not the live one, which drifts each tick.
+    private var resizeOriginalTextFontSize: CGFloat?
+    private var activeFreehand: FreehandObject?
+    /// Cached text regions from OCR for smart highlighter snapping.
+    var textRegions: [CGRect] = []
+    /// When the highlighter starts on a text line, stores the line's
+    /// bounding box so the stroke is constrained to a horizontal band.
+    private var highlighterSnapRect: CGRect?
+
+    // MARK: - Inline text editing state
+
+    /// The currently-visible inline editor, if any.
+    private var textEditor: AnnotationTextEditor?
+    /// When re-editing an existing TextObject (double-click), holds it so we
+    /// can mutate it on commit rather than creating a new object.
+    private var editingOriginalObject: TextObject?
+    private var isResizingTextEditor = false
+    private var textEditorResizeHandle: ResizeHandle?
+    private var textEditorResizeStart: CGPoint?
+    private var textEditorOriginalBounds: CGRect?
+
+    private let handleRadius: CGFloat = 5  // in image coords (adjusted by zoom in drawing)
+    private let deleteButtonRadius: CGFloat = 9
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // Ensure we become first responder when added to a window so that
+    // keyDown events (e.g. Delete to remove selected annotation) are delivered.
+    // Without this, the NSView hosted inside SwiftUI's NSHostingView never
+    // receives key events and the system just beeps.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
+    }
+
+    private func toImagePoint(_ viewPoint: CGPoint) -> CGPoint {
+        CGPoint(x: viewPoint.x / zoomScale, y: viewPoint.y / zoomScale)
+    }
+
+    private func nextCounterNumber() -> Int {
+        guard let doc = document else { return 1 }
+        let maxNumber = doc.objects
+            .compactMap { ($0 as? CounterObject)?.number }
+            .max() ?? 0
+        return maxNumber + 1
+    }
+
+    // MARK: - Handle Hit Testing
+
+    private func supportsIndependentEdgeResize(for object: any AnnotationObject) -> Bool {
+        object is RectangleObject || object is EllipseObject
+    }
+
+    private func handleHitTest(point: CGPoint, object: any AnnotationObject) -> ResizeHandle? {
+        if let pathObject = object as? any PathEditableAnnotation {
+            return pathHandleHitTest(point: point, object: pathObject)
+        }
+
+        let r = max(10 / max(zoomScale, 0.1), handleRadius + 4)
+        let includeEdgeHandles = supportsIndependentEdgeResize(for: object)
+        for (handle, center) in selectionHandleCenters(for: object.bounds, includeEdgeHandles: includeEdgeHandles) {
+            if hypot(point.x - center.x, point.y - center.y) <= r {
+                return handle
+            }
+        }
+        return nil
+    }
+
+    private func pathHandleHitTest(point: CGPoint, object: any PathEditableAnnotation) -> ResizeHandle? {
+        let r = max(10 / max(zoomScale, 0.1), handleRadius + 4)
+        for (handle, center) in pathHandleCenters(for: object) {
+            if hypot(point.x - center.x, point.y - center.y) <= r {
+                return handle
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Delete Button
+
+    /// Places the delete control near the object without overlapping resize handles.
+    private func deleteButtonCenter(for object: any AnnotationObject) -> CGPoint {
+        let scale = max(zoomScale, 0.1)
+        let offset = 12 / scale
+
+        if let path = object as? any PathEditableAnnotation {
+            // Anchor beside the arrowhead / line end instead of the loose AABB,
+            // which can push the button far away on diagonal arrows.
+            return CGPoint(x: path.end.x + offset * 0.5, y: path.end.y - offset)
+        }
+
+        let frame = selectionFrame(for: object.bounds)
+        return CGPoint(x: frame.maxX + offset, y: frame.minY - offset)
+    }
+
+    private func deleteButtonHitTest(point: CGPoint, object: any AnnotationObject) -> Bool {
+        let center = deleteButtonCenter(for: object)
+        let r = max(12 / max(zoomScale, 0.1), deleteButtonRadius + 3)
+        return hypot(point.x - center.x, point.y - center.y) <= r
+    }
+
+    private func drawDeleteButton(ctx: CGContext, object: any AnnotationObject) {
+        ctx.saveGState()
+
+        let scale = max(zoomScale, 0.1)
+        let center = deleteButtonCenter(for: object)
+        let r = deleteButtonRadius / scale
+        let circle = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
+
+        ctx.setFillColor(NSColor.systemRed.withAlphaComponent(0.92).cgColor)
+        ctx.fillEllipse(in: circle)
+
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.95).cgColor)
+        ctx.setLineWidth(1.8 / scale)
+        ctx.setLineCap(.round)
+        let inset = r * 0.38
+        ctx.move(to: CGPoint(x: center.x - inset, y: center.y - inset))
+        ctx.addLine(to: CGPoint(x: center.x + inset, y: center.y + inset))
+        ctx.move(to: CGPoint(x: center.x + inset, y: center.y - inset))
+        ctx.addLine(to: CGPoint(x: center.x - inset, y: center.y + inset))
+        ctx.strokePath()
+
+        ctx.restoreGState()
+    }
+
+    private func liveTextDeleteButtonCenter(boxFrame: CGRect) -> CGPoint {
+        let offset: CGFloat = 12
+        return CGPoint(x: boxFrame.maxX + offset, y: boxFrame.minY - offset)
+    }
+
+    private func liveTextDeleteButtonHitTest(pointInView: CGPoint, boxFrame: CGRect) -> Bool {
+        let center = liveTextDeleteButtonCenter(boxFrame: boxFrame)
+        return hypot(pointInView.x - center.x, pointInView.y - center.y) <= 12
+    }
+
+    private func drawLiveTextDeleteButton(boxFrame: CGRect) {
+        let center = liveTextDeleteButtonCenter(boxFrame: boxFrame)
+        let r: CGFloat = 9
+        let circle = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
+
+        NSColor.systemRed.withAlphaComponent(0.92).setFill()
+        NSBezierPath(ovalIn: circle).fill()
+
+        NSColor.white.withAlphaComponent(0.95).setStroke()
+        let xPath = NSBezierPath()
+        xPath.lineWidth = 1.8
+        xPath.lineCapStyle = .round
+        let inset = r * 0.38
+        xPath.move(to: CGPoint(x: center.x - inset, y: center.y - inset))
+        xPath.line(to: CGPoint(x: center.x + inset, y: center.y + inset))
+        xPath.move(to: CGPoint(x: center.x + inset, y: center.y - inset))
+        xPath.line(to: CGPoint(x: center.x - inset, y: center.y + inset))
+        xPath.stroke()
+    }
+
+    // MARK: - Cursor Management
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if liveTextHandleHitTest(pointInView: point) != nil {
+            return self
+        }
+        return super.hitTest(point)
+    }
+
+    override func resetCursorRects() {
+        discardCursorRects()
+        let cursor: NSCursor = currentTool == .select ? .arrow : .crosshair
+        addCursorRect(visibleRect, cursor: cursor)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let pointInView = convert(event.locationInWindow, from: nil)
+        // Mouse-moved events can still reach this first-responder canvas while
+        // the pointer is over SwiftUI toolbar controls. Do not let the canvas
+        // leak its drawing cursor into non-canvas chrome.
+        guard bounds.contains(pointInView) else {
+            NSCursor.arrow.set()
+            return
+        }
+
+        if let handle = liveTextHandleHitTest(pointInView: pointInView) {
+            cursorForHandle(handle).set()
+            return
+        }
+
+        if let editor = textEditor, editingOriginalObject != nil,
+           liveTextDeleteButtonHitTest(pointInView: pointInView, boxFrame: editor.viewBoxFrame) {
+            NSCursor.pointingHand.set()
+            return
+        }
+
+        let point = toImagePoint(pointInView)
+        guard let doc = document else { return }
+
+        if let selected = doc.selectedObject {
+            if deleteButtonHitTest(point: point, object: selected) {
+                NSCursor.pointingHand.set()
+                return
+            }
+            if let handle = handleHitTest(point: point, object: selected) {
+                cursorForHandle(handle).set()
+                return
+            }
+        }
+
+        if doc.objectAt(point: point) != nil {
+            NSCursor.openHand.set()
+        } else if currentTool == .select {
+            NSCursor.arrow.set()
+        } else {
+            NSCursor.crosshair.set()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self, userInfo: nil
+        ))
+    }
+
+    private func cursorForHandle(_ handle: ResizeHandle) -> NSCursor {
+        let symbolName: String
+        switch handle {
+        case .pathStart, .pathEnd, .pathControl:
+            return NSCursor.openHand
+        case .topLeft, .bottomRight:
+            // ↖↘ diagonal
+            symbolName = "arrow.up.left.and.arrow.down.right"
+        case .topRight, .bottomLeft:
+            // ↗↙ diagonal
+            symbolName = "arrow.up.right.and.arrow.down.left"
+        case .top, .bottom:
+            symbolName = "arrow.up.and.down"
+        case .left, .right:
+            symbolName = "arrow.left.and.right"
+        }
+        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)) {
+            return NSCursor(image: img, hotSpot: NSPoint(x: 8, y: 8))
+        }
+        return NSCursor.crosshair
+    }
+
+    // MARK: - Drawing
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        ctx.setFillColor(CGColor(gray: 0.12, alpha: 1))
+        ctx.fill(bounds)
+
+        ctx.saveGState()
+        ctx.scaleBy(x: zoomScale, y: zoomScale)
+
+        if let img = sourceImage {
+            let imgW = CGFloat(img.width)
+            let imgH = CGFloat(img.height)
+            ctx.saveGState()
+            ctx.translateBy(x: 0, y: imgH)
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: imgW, height: imgH))
+            ctx.restoreGState()
+        }
+
+        if let doc = document {
+            for object in doc.objects {
+                // While a TextObject is being re-edited inline, hide it from
+                // the canvas render so we don't double-draw the text under
+                // the live editor.
+                if let text = object as? TextObject, text === editingOriginalObject {
+                    continue
+                }
+                if let pixelate = object as? PixelateObject, let src = sourceImage {
+                    pixelate.renderWithSource(in: ctx, sourceImage: src)
+                } else {
+                    object.render(in: ctx)
+                }
+            }
+
+            if let freehand = activeFreehand {
+                freehand.render(in: ctx)
+            }
+
+            if let selected = doc.selectedObject {
+                if let text = selected as? TextObject, text === editingOriginalObject {
+                    // The live inline editor draws matching selection chrome below.
+                } else if let pathObject = selected as? any PathEditableAnnotation {
+                    drawPathSelectionHandles(ctx: ctx, object: pathObject)
+                    drawDeleteButton(ctx: ctx, object: pathObject)
+                } else {
+                    let includeEdgeHandles = supportsIndependentEdgeResize(for: selected)
+                    drawSelectionHandles(ctx: ctx, bounds: selected.bounds, includeEdgeHandles: includeEdgeHandles)
+                    drawDeleteButton(ctx: ctx, object: selected)
+                }
+            }
+
+            if let start = dragStart, let current = dragCurrent,
+               isDragging, activeResizeHandle == nil, !isMovingObject,
+               currentTool != .select, currentTool != .freehand, currentTool != .text, currentTool != .counter, currentTool != .highlighter {
+                drawPreview(ctx: ctx, from: start, to: current)
+            }
+        }
+
+        ctx.restoreGState()
+
+        drawLiveTextEditorChrome()
+    }
+
+    private func drawLiveTextEditorChrome() {
+        guard let editor = textEditor else { return }
+        let boxFrame = editor.viewBoxFrame
+        guard !boxFrame.isEmpty else { return }
+
+        let pillRect = boxFrame.insetBy(dx: -4, dy: -4)
+        let path = NSBezierPath(roundedRect: pillRect, xRadius: 4, yRadius: 4)
+        if let fillColor = editor.fillColor {
+            fillColor.setFill()
+            path.fill()
+        } else {
+            NSColor.black.withAlphaComponent(0.08).setFill()
+            path.fill()
+        }
+
+        if let outlineColor = editor.boxOutlineColor {
+            outlineColor.setStroke()
+            path.lineWidth = 2
+            path.stroke()
+        }
+
+        editor.drawGlyphTraceBehindText()
+
+        NSColor.controlAccentColor.withAlphaComponent(0.82).setStroke()
+        let selection = NSBezierPath(rect: boxFrame)
+        selection.lineWidth = 1
+        selection.setLineDash([4, 3], count: 2, phase: 0)
+        selection.stroke()
+
+        let handleSize: CGFloat = 8
+        for (_, center) in liveTextHandleCenters(boxFrame: boxFrame) {
+            let rect = CGRect(
+                x: center.x - handleSize / 2,
+                y: center.y - handleSize / 2,
+                width: handleSize,
+                height: handleSize
+            )
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            NSColor.controlAccentColor.setStroke()
+            let border = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
+            border.lineWidth = 1.5
+            border.stroke()
+        }
+
+        if editingOriginalObject != nil {
+            drawLiveTextDeleteButton(boxFrame: boxFrame)
+        }
+    }
+
+    private func drawPathSelectionHandles(ctx: CGContext, object: any PathEditableAnnotation) {
+        ctx.saveGState()
+
+        let scale = max(zoomScale, 0.1)
+        let endpointSize: CGFloat = 8 / scale
+        let controlSize: CGFloat = 7 / scale
+        let lw: CGFloat = 1.5 / scale
+        let accent = NSColor.controlAccentColor.withAlphaComponent(0.9).cgColor
+        let controlFill = NSColor.white.withAlphaComponent(0.92).cgColor
+
+        if let controlPoint = object.controlPoint {
+            ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.36).cgColor)
+            ctx.setLineWidth(1 / scale)
+            ctx.setLineDash(phase: 0, lengths: [3 / scale, 4 / scale])
+            ctx.move(to: object.start)
+            ctx.addLine(to: controlPoint)
+            ctx.addLine(to: object.end)
+            ctx.strokePath()
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
+
+        for (_, center) in [(ResizeHandle.pathStart, object.start), (.pathEnd, object.end)] {
+            let rect = CGRect(
+                x: center.x - endpointSize / 2,
+                y: center.y - endpointSize / 2,
+                width: endpointSize,
+                height: endpointSize
+            )
+            ctx.setFillColor(accent)
+            ctx.fillEllipse(in: rect)
+            ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.92).cgColor)
+            ctx.setLineWidth(lw)
+            ctx.strokeEllipse(in: rect.insetBy(dx: lw / 2, dy: lw / 2))
+        }
+
+        let controlPoint = object.controlPoint ?? pathMidpoint(object)
+        let controlRect = CGRect(
+            x: controlPoint.x - controlSize / 2,
+            y: controlPoint.y - controlSize / 2,
+            width: controlSize,
+            height: controlSize
+        )
+        ctx.setFillColor(controlFill)
+        ctx.fillEllipse(in: controlRect)
+        ctx.setStrokeColor(accent)
+        ctx.setLineWidth(lw)
+        ctx.strokeEllipse(in: controlRect.insetBy(dx: lw / 2, dy: lw / 2))
+
+        ctx.restoreGState()
+    }
+
+    private func pathHandleCenters(for object: any PathEditableAnnotation) -> [(ResizeHandle, CGPoint)] {
+        [
+            (.pathStart, object.start),
+            (.pathEnd, object.end),
+            (.pathControl, object.controlPoint ?? pathMidpoint(object)),
+        ]
+    }
+
+    private func pathMidpoint(_ object: any PathEditableAnnotation) -> CGPoint {
+        CGPoint(x: (object.start.x + object.end.x) / 2, y: (object.start.y + object.end.y) / 2)
+    }
+
+    private func drawSelectionHandles(ctx: CGContext, bounds: CGRect, includeEdgeHandles: Bool = false) {
+        ctx.saveGState()
+
+        let scale = max(zoomScale, 0.1)
+        let hs: CGFloat = 4 / scale
+        let lw: CGFloat = 1 / scale
+        let selColor = NSColor.controlAccentColor.withAlphaComponent(0.78).cgColor
+        let frame = selectionFrame(for: bounds)
+
+        // Selection border
+        ctx.setStrokeColor(selColor)
+        ctx.setLineWidth(lw)
+        ctx.setLineDash(phase: 0, lengths: [4 / scale, 3 / scale])
+        ctx.stroke(frame)
+        ctx.setLineDash(phase: 0, lengths: [])
+
+        // Resize handles
+        for (_, center) in selectionHandleCenters(for: bounds, includeEdgeHandles: includeEdgeHandles) {
+            let r = CGRect(x: center.x - hs, y: center.y - hs, width: hs * 2, height: hs * 2)
+            ctx.setFillColor(NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor)
+            ctx.fillEllipse(in: r)
+            ctx.setStrokeColor(selColor)
+            ctx.setLineWidth(lw)
+            ctx.strokeEllipse(in: r)
+        }
+
+        ctx.restoreGState()
+    }
+
+    private func selectionFrame(for bounds: CGRect) -> CGRect {
+        let outset = 6 / max(zoomScale, 0.1)
+        return bounds.insetBy(dx: -outset, dy: -outset)
+    }
+
+    private func selectionHandleCenters(for bounds: CGRect, includeEdgeHandles: Bool = false) -> [(ResizeHandle, CGPoint)] {
+        let frame = selectionFrame(for: bounds)
+        var handles: [(ResizeHandle, CGPoint)] = [
+            (.topLeft, CGPoint(x: frame.minX, y: frame.minY)),
+            (.topRight, CGPoint(x: frame.maxX, y: frame.minY)),
+            (.bottomLeft, CGPoint(x: frame.minX, y: frame.maxY)),
+            (.bottomRight, CGPoint(x: frame.maxX, y: frame.maxY)),
+        ]
+        if includeEdgeHandles {
+            handles += [
+                (.top, CGPoint(x: frame.midX, y: frame.minY)),
+                (.bottom, CGPoint(x: frame.midX, y: frame.maxY)),
+                (.left, CGPoint(x: frame.minX, y: frame.midY)),
+                (.right, CGPoint(x: frame.maxX, y: frame.midY)),
+            ]
+        }
+        return handles
+    }
+
+    private func liveTextHandleCenters(boxFrame: CGRect) -> [(ResizeHandle, CGPoint)] {
+        [
+            (.topLeft, CGPoint(x: boxFrame.minX, y: boxFrame.minY)),
+            (.topRight, CGPoint(x: boxFrame.maxX, y: boxFrame.minY)),
+            (.bottomLeft, CGPoint(x: boxFrame.minX, y: boxFrame.maxY)),
+            (.bottomRight, CGPoint(x: boxFrame.maxX, y: boxFrame.maxY)),
+        ]
+    }
+
+    private func liveTextHandleHitTest(pointInView: CGPoint) -> ResizeHandle? {
+        guard let editor = textEditor else { return nil }
+        let hitRadius: CGFloat = 12
+        for (handle, center) in liveTextHandleCenters(boxFrame: editor.viewBoxFrame) {
+            if hypot(pointInView.x - center.x, pointInView.y - center.y) <= hitRadius {
+                return handle
+            }
+        }
+        return nil
+    }
+
+    private func drawPreview(ctx: CGContext, from start: CGPoint, to end: CGPoint) {
+        ctx.saveGState()
+        ctx.setStrokeColor(currentStyle.color.cgColor)
+        ctx.setLineWidth(currentStyle.lineWidth)
+        ctx.setAlpha(0.6)
+
+        let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                          width: abs(end.x - start.x), height: abs(end.y - start.y))
+
+        switch currentTool {
+        case .arrow:
+            ctx.setLineCap(.round)
+            currentStyle.pattern.apply(to: ctx, lineWidth: currentStyle.lineWidth)
+            ctx.move(to: start)
+            ctx.addLine(to: end)
+            ctx.strokePath()
+
+            ctx.setLineDash(phase: 0, lengths: [])
+            let angle = atan2(end.y - start.y, end.x - start.x)
+            let headAngle: CGFloat = .pi / 6
+            let headLength = max(15, currentStyle.lineWidth * 3)
+            let p1 = CGPoint(
+                x: end.x - headLength * cos(angle - headAngle),
+                y: end.y - headLength * sin(angle - headAngle)
+            )
+            let p2 = CGPoint(
+                x: end.x - headLength * cos(angle + headAngle),
+                y: end.y - headLength * sin(angle + headAngle)
+            )
+            ctx.move(to: end)
+            ctx.addLine(to: p1)
+            ctx.move(to: end)
+            ctx.addLine(to: p2)
+            ctx.strokePath()
+        case .line:
+            ctx.move(to: start)
+            ctx.addLine(to: end)
+            ctx.strokePath()
+        case .rectangle: ctx.stroke(rect)
+        case .ellipse: ctx.strokeEllipse(in: rect)
+        case .pixelate: ctx.setFillColor(CGColor(gray: 0.5, alpha: 0.3)); ctx.fill(rect)
+        default: break
+        }
+        ctx.restoreGState()
+    }
+
+    // MARK: - Mouse Handling
+
+    override func mouseDown(with event: NSEvent) {
+        // If we're currently editing a text object, any click *outside* the
+        // editor commits the edit; clicks inside are forwarded to the editor.
+        if let editor = textEditor {
+            let pointInSelf = convert(event.locationInWindow, from: nil)
+            if editingOriginalObject != nil,
+               liveTextDeleteButtonHitTest(pointInView: pointInSelf, boxFrame: editor.viewBoxFrame) {
+                document?.removeObject(id: editingOriginalObject!.id)
+                editor.removeFromSuperview()
+                textEditor = nil
+                editingOriginalObject = nil
+                isDragging = false
+                isMovingObject = false
+                needsDisplay = true
+                onDocumentChanged?()
+                onTextEditingEnded?()
+                return
+            }
+            if let handle = liveTextHandleHitTest(pointInView: pointInSelf) {
+                isResizingTextEditor = true
+                isDragging = true
+                textEditorResizeHandle = handle
+                textEditorResizeStart = toImagePoint(pointInSelf)
+                textEditorOriginalBounds = CGRect(origin: editor.imageOrigin, size: editor.boxSize)
+                cursorForHandle(handle).set()
+                needsDisplay = true
+                return
+            }
+            if editor.containsCanvasPoint(pointInSelf) {
+                editor.focusTextView()
+                return
+            } else {
+                commitTextEditing()
+                // Fall through: the click should still be processed as a fresh
+                // canvas interaction (e.g. create another text box, select, etc.).
+            }
+        }
+
+        // Make sure we own keyboard focus so subsequent keyDown events
+        // (Delete, etc.) actually reach us. Safe to call even if we already are.
+        window?.makeKey()
+        window?.makeFirstResponder(self)
+
+        guard let doc = document else { return }
+        let point = toImagePoint(convert(event.locationInWindow, from: nil))
+        dragStart = point
+        dragCurrent = point
+        isDragging = true
+        isMovingObject = false
+        activeResizeHandle = nil
+        resizeOriginalTextFontSize = nil
+        resizeOriginalFreehandPoints = nil
+        resizeOriginalEndpoints = nil
+        resizeOriginalLineControlPoint = nil
+
+        if let selected = doc.selectedObject,
+           deleteButtonHitTest(point: point, object: selected) {
+            doc.removeObject(id: selected.id)
+            isDragging = false
+            dragStart = nil
+            dragCurrent = nil
+            dragObjectID = nil
+            needsDisplay = true
+            onDocumentChanged?()
+            return
+        }
+
+        if let selected = doc.selectedObject,
+           let handle = handleHitTest(point: point, object: selected) {
+            activeResizeHandle = handle
+            resizeOriginalBounds = selected.bounds
+            resizeOriginalFreehandPoints = (selected as? FreehandObject)?.points
+            if let arrow = selected as? ArrowObject {
+                resizeOriginalEndpoints = (arrow.start, arrow.end)
+                resizeOriginalLineControlPoint = arrow.controlPoint ?? pathMidpoint(arrow)
+            } else if let line = selected as? LineObject {
+                resizeOriginalEndpoints = (line.start, line.end)
+                resizeOriginalLineControlPoint = line.controlPoint ?? pathMidpoint(line)
+            }
+            if let text = selected as? TextObject {
+                resizeOriginalTextFontSize = text.fontSize
+            }
+            dragObjectID = selected.id
+            doc.beginDrag()
+            cursorForHandle(handle).set()
+            needsDisplay = true
+            return
+        }
+
+        if currentTool == .select,
+           event.clickCount == 2,
+           let obj = doc.objectAt(point: point),
+           let text = obj as? TextObject {
+            isDragging = false
+            beginTextEditing(at: text.origin, existing: text)
+            return
+        }
+
+        if let obj = doc.objectAt(point: point) {
+            doc.selectObject(id: obj.id)
+            dragObjectID = obj.id
+            doc.beginDrag()
+            isMovingObject = true
+            NSCursor.closedHand.set()
+            needsDisplay = true
+            return
+        }
+
+        if currentTool == .select {
+            doc.clearSelection()
+            dragObjectID = nil
+        } else if currentTool == .freehand || currentTool == .highlighter {
+            // Smart highlighter: if starting on a text line, snap to it.
+            highlighterSnapRect = nil
+            if currentTool == .highlighter {
+                // Use a slightly expanded region for easier hit detection
+                for region in textRegions {
+                    let expanded = region.insetBy(dx: 0, dy: -region.height * 0.3)
+                    if expanded.contains(point) {
+                        highlighterSnapRect = region
+                        break
+                    }
+                }
+            }
+            if let snap = highlighterSnapRect {
+                let snappedY = snap.midY
+                let snappedPoint = CGPoint(x: point.x, y: snappedY)
+                activeFreehand = FreehandObject(points: [snappedPoint], style: currentStyle)
+            } else {
+                activeFreehand = FreehandObject(points: [point], style: currentStyle)
+            }
+        }
+
+        needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let point = toImagePoint(convert(event.locationInWindow, from: nil))
+        dragCurrent = point
+
+        if isResizingTextEditor,
+           let editor = textEditor,
+           let handle = textEditorResizeHandle?.textResizeHandle,
+           let start = textEditorResizeStart,
+           let originalBounds = textEditorOriginalBounds {
+            let delta = CGSize(width: point.x - start.x, height: point.y - start.y)
+            let rect = TextResizeGeometry.rect(
+                originalBounds: originalBounds,
+                handle: handle,
+                dragDelta: delta,
+                minSize: CGSize(width: 60, height: max(28, editor.fontSize + 12))
+            )
+            editor.resizeBox(to: rect)
+            needsDisplay = true
+            return
+        }
+
+        if let handle = activeResizeHandle, let objID = dragObjectID,
+           let origBounds = resizeOriginalBounds, let start = dragStart {
+            // Resize handles remain active even while a drawing tool is selected.
+            resizeObject(id: objID, handle: handle, originalBounds: origBounds,
+                         dragStart: start, dragCurrent: point)
+        } else if isMovingObject, let objID = dragObjectID, let start = dragStart {
+            let delta = CGSize(width: point.x - start.x, height: point.y - start.y)
+            document?.moveObject(id: objID, by: delta)
+            dragStart = point
+        } else if currentTool == .freehand || currentTool == .highlighter {
+            if let snap = highlighterSnapRect {
+                // Constrain to horizontal line at the text's vertical center
+                let snappedPoint = CGPoint(x: point.x, y: snap.midY)
+                activeFreehand?.addPoint(snappedPoint)
+            } else {
+                activeFreehand?.addPoint(point)
+            }
+        }
+
+        needsDisplay = true
+    }
+
+    private func resizeObject(id: ObjectID, handle: ResizeHandle,
+                              originalBounds: CGRect, dragStart: CGPoint, dragCurrent: CGPoint) {
+        let dx = dragCurrent.x - dragStart.x
+        let dy = dragCurrent.y - dragStart.y
+
+        guard let obj = document?.objects.first(where: { $0.id == id }) else { return }
+        if let pathObject = obj as? any PathEditableAnnotation {
+            guard let endpoints = resizeOriginalEndpoints else { return }
+            switch handle {
+            case .pathStart:
+                pathObject.start = CGPoint(x: endpoints.start.x + dx, y: endpoints.start.y + dy)
+            case .pathEnd:
+                pathObject.end = CGPoint(x: endpoints.end.x + dx, y: endpoints.end.y + dy)
+            case .pathControl:
+                let original = resizeOriginalLineControlPoint ?? CGPoint(
+                    x: (endpoints.start.x + endpoints.end.x) / 2,
+                    y: (endpoints.start.y + endpoints.end.y) / 2
+                )
+                pathObject.controlPoint = CGPoint(x: original.x + dx, y: original.y + dy)
+            default:
+                break
+            }
+            return
+        }
+
+        var newRect = originalBounds
+        switch handle {
+        case .topLeft:
+            newRect.origin.x = originalBounds.minX + dx
+            newRect.origin.y = originalBounds.minY + dy
+            newRect.size.width = originalBounds.width - dx
+            newRect.size.height = originalBounds.height - dy
+        case .topRight:
+            newRect.origin.y = originalBounds.minY + dy
+            newRect.size.width = originalBounds.width + dx
+            newRect.size.height = originalBounds.height - dy
+        case .bottomLeft:
+            newRect.origin.x = originalBounds.minX + dx
+            newRect.size.width = originalBounds.width - dx
+            newRect.size.height = originalBounds.height + dy
+        case .bottomRight:
+            newRect.size.width = originalBounds.width + dx
+            newRect.size.height = originalBounds.height + dy
+        case .top:
+            newRect.origin.y = originalBounds.minY + dy
+            newRect.size.height = originalBounds.height - dy
+        case .bottom:
+            newRect.size.height = originalBounds.height + dy
+        case .left:
+            newRect.origin.x = originalBounds.minX + dx
+            newRect.size.width = originalBounds.width - dx
+        case .right:
+            newRect.size.width = originalBounds.width + dx
+        case .pathStart, .pathEnd, .pathControl:
+            return
+        }
+
+        // Enforce minimum size
+        if newRect.width < 10 { newRect.size.width = 10 }
+        if newRect.height < 10 { newRect.size.height = 10 }
+
+        // Apply to the object
+        if let rect = obj as? RectangleObject { rect.rect = newRect }
+        else if let ellipse = obj as? EllipseObject { ellipse.rect = newRect }
+        else if let pixelate = obj as? PixelateObject { pixelate.rect = newRect }
+        else if let text = obj as? TextObject {
+            if text.boxSize != nil, let textHandle = handle.textResizeHandle {
+                let rect = TextResizeGeometry.rect(
+                    originalBounds: originalBounds,
+                    handle: textHandle,
+                    dragDelta: CGSize(width: dx, height: dy),
+                    minSize: CGSize(width: 60, height: max(28, text.fontSize + 12))
+                )
+                text.origin = rect.origin
+                text.boxSize = rect.size
+                return
+            }
+
+            // Text has intrinsic bounds derived from fontSize, so we scale fontSize
+            // uniformly and then reposition origin so the corner opposite the dragged
+            // handle stays fixed.
+            guard let origFontSize = resizeOriginalTextFontSize,
+                  let textHandle = handle.textResizeHandle else { return }
+            text.fontSize = TextResizeGeometry.fontSize(
+                originalBounds: originalBounds,
+                originalFontSize: origFontSize,
+                handle: textHandle,
+                dragDelta: CGSize(width: dx, height: dy)
+            )
+
+            // Intrinsic size after fontSize change.
+            text.origin = TextResizeGeometry.origin(
+                originalBounds: originalBounds,
+                resizedSize: text.bounds.size,
+                handle: textHandle
+            )
+        }
+        else if let arrow = obj as? ArrowObject {
+            guard let endpoints = resizeOriginalEndpoints else { return }
+            arrow.start = scaledPoint(endpoints.start, from: originalBounds, to: newRect)
+            arrow.end = scaledPoint(endpoints.end, from: originalBounds, to: newRect)
+        } else if let line = obj as? LineObject {
+            guard let endpoints = resizeOriginalEndpoints else { return }
+            line.start = scaledPoint(endpoints.start, from: originalBounds, to: newRect)
+            line.end = scaledPoint(endpoints.end, from: originalBounds, to: newRect)
+        } else if let freehand = obj as? FreehandObject {
+            // Scale all points from original bounds to new bounds
+            guard originalBounds.width > 0, originalBounds.height > 0,
+                  let originalPoints = resizeOriginalFreehandPoints else { return }
+            let scaleX = newRect.width / originalBounds.width
+            let scaleY = newRect.height / originalBounds.height
+            for i in 0..<min(freehand.points.count, originalPoints.count) {
+                freehand.points[i].x = newRect.origin.x + (originalPoints[i].x - originalBounds.origin.x) * scaleX
+                freehand.points[i].y = newRect.origin.y + (originalPoints[i].y - originalBounds.origin.y) * scaleY
+            }
+            freehand.invalidateCache()
+        }
+    }
+
+    private func scaledPoint(_ point: CGPoint, from originalBounds: CGRect, to newRect: CGRect) -> CGPoint {
+        guard originalBounds.width > 0, originalBounds.height > 0 else { return point }
+        return CGPoint(
+            x: newRect.origin.x + (point.x - originalBounds.origin.x) * (newRect.width / originalBounds.width),
+            y: newRect.origin.y + (point.y - originalBounds.origin.y) * (newRect.height / originalBounds.height)
+        )
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isResizingTextEditor {
+            isResizingTextEditor = false
+            isDragging = false
+            textEditorResizeHandle = nil
+            textEditorResizeStart = nil
+            textEditorOriginalBounds = nil
+            textEditor?.focusTextView()
+            needsDisplay = true
+            return
+        }
+
+        guard let doc = document, let start = dragStart else {
+            isDragging = false; return
+        }
+        let end = toImagePoint(convert(event.locationInWindow, from: nil))
+
+        if activeResizeHandle != nil {
+            dragObjectID = nil
+            activeResizeHandle = nil
+            resizeOriginalBounds = nil
+            resizeOriginalTextFontSize = nil
+            resizeOriginalFreehandPoints = nil
+            resizeOriginalEndpoints = nil
+            resizeOriginalLineControlPoint = nil
+            isDragging = false
+            dragStart = nil
+            dragCurrent = nil
+            needsDisplay = true
+            onDocumentChanged?()
+            return
+        }
+
+        if isMovingObject {
+            isMovingObject = false
+            dragObjectID = nil
+            activeResizeHandle = nil
+            resizeOriginalBounds = nil
+            resizeOriginalTextFontSize = nil
+            resizeOriginalFreehandPoints = nil
+            resizeOriginalEndpoints = nil
+            resizeOriginalLineControlPoint = nil
+            isDragging = false
+            dragStart = nil
+            dragCurrent = nil
+            needsDisplay = true
+            onDocumentChanged?()
+            return
+        }
+
+        if currentTool == .select {
+            dragObjectID = nil
+            activeResizeHandle = nil
+            resizeOriginalBounds = nil
+            resizeOriginalTextFontSize = nil
+            resizeOriginalFreehandPoints = nil
+            resizeOriginalEndpoints = nil
+            resizeOriginalLineControlPoint = nil
+        } else {
+            switch currentTool {
+            case .arrow:
+                if hypot(end.x - start.x, end.y - start.y) > 5 / zoomScale {
+                    doc.addObject(ArrowObject(start: start, end: end, style: currentStyle))
+                }
+            case .line:
+                if hypot(end.x - start.x, end.y - start.y) > 5 / zoomScale {
+                    doc.addObject(LineObject(start: start, end: end, style: currentStyle))
+                }
+            case .rectangle:
+                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                if rect.width > 3 / zoomScale && rect.height > 3 / zoomScale {
+                    doc.addObject(RectangleObject(rect: rect, style: currentStyle))
+                }
+            case .ellipse:
+                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                if rect.width > 3 / zoomScale && rect.height > 3 / zoomScale {
+                    doc.addObject(EllipseObject(rect: rect, style: currentStyle))
+                }
+            case .text:
+                // Inline editor replaces the old NSAlert popup. Spawn at the
+                // click point; commit happens on Esc or outside-click.
+                beginTextEditing(at: end, existing: nil)
+                // Skip the normal post-create path — creation is deferred to
+                // commitTextEditing, and we do NOT want to switch back to
+                // select tool yet (user hasn't typed anything).
+                isDragging = false
+                dragStart = nil
+                dragCurrent = nil
+                needsDisplay = true
+                return
+            case .freehand, .highlighter:
+                if let freehand = activeFreehand, freehand.points.count > 1 {
+                    doc.addObject(freehand)
+                }
+                activeFreehand = nil
+                highlighterSnapRect = nil
+            case .pixelate:
+                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                if rect.width > 5 / zoomScale && rect.height > 5 / zoomScale {
+                    let redaction = PixelateObject(
+                        rect: rect,
+                        blockSize: currentStyle.lineWidth,
+                        mode: redactionMode
+                    )
+                    redaction.style = currentStyle
+                    doc.addObject(redaction)
+                }
+            case .counter:
+                let number = nextCounterNumber()
+                let counter = CounterObject(center: end, number: number, radius: currentStyle.lineWidth, style: currentStyle)
+                doc.addObject(counter)
+            case .select:
+                break
+            }
+        }
+
+        isDragging = false
+        dragStart = nil
+        dragCurrent = nil
+        needsDisplay = true
+        onDocumentChanged?()
+
+        if currentTool != .select {
+            onObjectCreated?()
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if textEditor != nil {
+            super.keyDown(with: event)
+            return
+        }
+
+        if event.keyCode == 51 || event.keyCode == 117 {
+            document?.removeSelected()
+            needsDisplay = true
+            onDocumentChanged?()
+            return
+        }
+
+        if handleClipboardShortcut(event) {
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    /// Handles ⌘C / ⌘V / ⌘D for annotation objects. Returns `true` when handled.
+    @discardableResult
+    func handleClipboardShortcut(_ event: NSEvent) -> Bool {
+        guard textEditor == nil else { return false }
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard modifiers == .command,
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return false
+        }
+
+        switch key {
+        case "c":
+            guard document?.copySelected() == true else { return false }
+            return true
+        case "v":
+            guard document?.pasteClipboard() == true else { return false }
+            needsDisplay = true
+            onDocumentChanged?()
+            return true
+        case "d":
+            guard document?.duplicateSelected() == true else { return false }
+            needsDisplay = true
+            onDocumentChanged?()
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Inline text editing
+
+    /// Begin an inline text edit at `imagePoint` (image coordinates).
+    /// Pass an `existing` TextObject for double-click re-edit; pass `nil` for
+    /// a fresh text creation.
+    private func beginTextEditing(at imagePoint: CGPoint, existing: TextObject?) {
+        // If one is already up, finish it before opening a new one.
+        if textEditor != nil { commitTextEditing() }
+
+        let editor = AnnotationTextEditor(frame: .zero)
+        editor.editorDelegate = self
+        editor.zoomScale = zoomScale
+        editor.imageOrigin = imagePoint
+        addSubview(editor)
+        textEditor = editor
+
+        if let existing {
+            editor.fontSize = existing.fontSize
+            editor.fontName = existing.fontName
+            editor.textColor = existing.style.color.nsColor
+                .withAlphaComponent(existing.style.opacity)
+            editor.boxSize = existing.boxSize ?? existing.bounds.size
+            editor.fillColor = existing.fillColor?.nsColor.withAlphaComponent(0.5)
+            editor.boxOutlineColor = existing.outlineColor?.nsColor
+            editor.glyphStrokeColor = existing.glyphStrokeColor?.nsColor
+            editor.beginEditing(initialText: existing.text)
+            editingOriginalObject = existing
+        } else {
+            editor.fontSize = currentTextFontSize
+            editor.textColor = currentStyle.color.nsColor
+                .withAlphaComponent(currentStyle.opacity)
+            editor.fillColor = currentTextFillColor?.nsColor.withAlphaComponent(0.5)
+            editor.boxOutlineColor = currentTextOutlineColor?.nsColor
+            editor.glyphStrokeColor = currentTextGlyphStrokeColor?.nsColor
+            editor.beginEditing(initialText: "")
+            editingOriginalObject = nil
+        }
+
+        repositionEditor()
+        editor.focusTextView()
+        needsDisplay = true
+
+        // Notify SwiftUI so the toolbar can flip into font-size mode and
+        // — for re-edits — sync the slider to the object's fontSize.
+        onTextEditingStarted?(
+            editor.fontSize,
+            editor.fillColor != nil,
+            editor.boxOutlineColor != nil,
+            editor.glyphStrokeColor != nil
+        )
+    }
+
+    /// Position the editor's frame based on its `imageOrigin` and the current
+    /// zoom. Called on create, on zoom change, and on content resize.
+    private func repositionEditor() {
+        guard let editor = textEditor else { return }
+        let viewOrigin = CGPoint(
+            x: editor.imageOrigin.x * zoomScale,
+            y: editor.imageOrigin.y * zoomScale
+        )
+        editor.setFrameOrigin(viewOrigin)
+    }
+
+    /// Finalize the edit: create / mutate / delete a TextObject depending on
+    /// the combination of (editingOriginalObject, text) and tear down the
+    /// inline editor.
+    private func commitTextEditing() {
+        guard let editor = textEditor, let doc = document else { return }
+
+        let finalText = editor.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let origin = editor.imageOrigin
+        let boxSize = editor.boxSize
+        let editorFillColor = editor.fillColor.map(AnnotationColor.init(nsColor:))
+        let editorOutlineColor = editor.boxOutlineColor.map(AnnotationColor.init(nsColor:))
+        let editorGlyphStrokeColor = editor.glyphStrokeColor.map(AnnotationColor.init(nsColor:))
+
+        if let existing = editingOriginalObject {
+            if finalText.isEmpty {
+                // Edited to empty → delete the original.
+                doc.removeObject(id: existing.id)
+            } else if finalText != existing.text
+                || editor.fontSize != existing.fontSize
+                || boxSize != existing.boxSize
+                || editorFillColor != existing.fillColor
+                || editorOutlineColor != existing.outlineColor
+                || editorGlyphStrokeColor != existing.glyphStrokeColor {
+                // Mutated text or fontSize — push one undo step, then update.
+                doc.beginDrag()
+                existing.text = finalText
+                existing.boxSize = boxSize
+                existing.fontSize = editor.fontSize
+                existing.fillColor = editorFillColor
+                existing.outlineColor = editorOutlineColor
+                existing.glyphStrokeColor = editorGlyphStrokeColor
+            }
+        } else if !finalText.isEmpty {
+            // Fresh edit with content → create a new TextObject using the
+            // editor's current style (which reflects live toolbar changes).
+            let newObj = TextObject(
+                text: finalText,
+                origin: origin,
+                boxSize: boxSize,
+                fontSize: editor.fontSize,
+                fillColor: editorFillColor,
+                outlineColor: editorOutlineColor,
+                glyphStrokeColor: editorGlyphStrokeColor,
+                style: currentStyle
+            )
+            doc.addObject(newObj)
+        }
+        // else: fresh edit with empty text → just discard.
+
+        // Tear down the editor.
+        editor.removeFromSuperview()
+        textEditor = nil
+        editingOriginalObject = nil
+
+        needsDisplay = true
+        window?.makeFirstResponder(self)
+        onDocumentChanged?()
+        onTextEditingEnded?()
+
+        // Creation path: switch back to select, matching the other one-shot
+        // tools (arrow / rect / ellipse / pixelate).
+        if currentTool == .text {
+            onObjectCreated?()
+        }
+    }
+
+    /// When `currentStyle` changes (toolbar color / opacity) and we're mid-edit,
+    /// push the new color into the editor so the typed text re-renders live.
+    private func syncEditorStyle() {
+        guard let editor = textEditor else { return }
+        editor.textColor = currentStyle.color.nsColor
+            .withAlphaComponent(currentStyle.opacity)
+    }
+}
+
+// MARK: - AnnotationTextEditorDelegate
+
+extension AnnotationCanvasNSView: AnnotationTextEditorDelegate {
+    func textEditor(_ editor: AnnotationTextEditor, didCommitText text: String) {
+        // Editor is asking us to finalize (Esc pressed). Outside-click commits
+        // are handled directly in mouseDown.
+        commitTextEditing()
+    }
+}

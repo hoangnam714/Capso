@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Capso</title>
+        <link>https://github.com/hoangnam714/Capso/releases</link>
+        <description>Capso updates from GitHub Releases (https://github.com/hoangnam714/Capso)</description>
+        <language>en</language>
+        <!--
+          Publish a signed Capso-*.dmg on the GitHub Release, then regenerate this
+          file with Sparkle's generate_appcast and attach it as appcast.xml on
+          the latest release (SUFeedURL points at releases/latest/download/appcast.xml).
+        -->
+    </channel>
+</rss>

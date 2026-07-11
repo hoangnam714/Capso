@@ -1,0 +1,40 @@
+# Xcode
+*.xcodeproj/
+xcuserdata/
+*.xcworkspace/
+DerivedData/
+build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.moved-aside
+
+# Swift Package Manager
+.build/
+Package.resolved
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# XcodeGen
+*.xcodeproj
+
+# Internal docs (not for public repo)
+docs/
+AGENTS.md
+CLAUDE.md
+.impeccable.md
+
+# AI agent configs
+.claude/
+.superpowers/
+
+# Git worktrees
+.worktrees/
+
+# Local-only scripts (not shipped with the open-source repo)
+scripts/
+.omx/
