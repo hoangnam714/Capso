@@ -51,6 +51,15 @@ public final class PermissionManager {
         }
     }
 
+    /// Triggers the system Screen Recording prompt (via ScreenCaptureKit) and
+    /// opens System Settings if access is still denied afterwards.
+    public func requestScreenRecordingPermission() async {
+        await checkScreenRecordingPermission()
+        if !screenRecordingGranted {
+            openScreenRecordingSettings()
+        }
+    }
+
     // MARK: - Camera
 
     public func checkCameraPermission() {

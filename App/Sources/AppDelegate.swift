@@ -3,6 +3,7 @@ import AppKit
 import SharedKit
 import ShareKit
 import KeyboardShortcuts
+import LaunchAtLogin
 import Sparkle
 
 @MainActor
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var historyCoordinator: HistoryCoordinator?
     private(set) var shareCoordinator: ShareCoordinator?
     private var preferencesWindow: PreferencesWindow?
+    private var onboardingWindow: OnboardingWindow?
     /// Sparkle update coordinator used by preferences and manual update checks.
     let updateManager = UpdateManager()
 
@@ -33,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(300, forKey: "NSInitialToolTipDelay")
 
         migrateShortcutsIfNeeded()
+        applyDefaultCapturePreferencesIfNeeded()
         settings.startTrial()
         captureCoordinator = CaptureCoordinator(settings: settings)
         recordingCoordinator = RecordingCoordinator(settings: settings)
@@ -67,11 +70,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerGlobalShortcuts()
         historyCoordinator?.runCleanup()
 
-        // Safety net: if the menu bar icon is hidden, the user has no obvious
-        // way to access settings, so surface Preferences on launch.
-        if !settings.showMenuBarIcon {
+        // First-launch permissions onboarding (Screen Recording, etc.).
+        if !settings.permissionsOnboardingShown {
             DispatchQueue.main.async { [weak self] in
-                self?.showPreferences()
+                self?.showPermissionsOnboarding()
+            }
+        } else {
+            applyDefaultLaunchAtLoginIfNeeded()
+            // Safety net: if the menu bar icon is hidden, the user has no obvious
+            // way to access settings, so surface Preferences on launch.
+            if !settings.showMenuBarIcon {
+                DispatchQueue.main.async { [weak self] in
+                    self?.showPreferences()
+                }
             }
         }
 
@@ -104,19 +115,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// One-time migration: clear stale KeyboardShortcuts UserDefaults so new defaults apply.
     private func migrateShortcutsIfNeeded() {
-        let migrationKey = "shortcutsMigratedToOptionShift"
+        let migrationKey = "shortcutsMigratedToMacOSScreenshotDefaults"
         if !UserDefaults.standard.bool(forKey: migrationKey) {
-            KeyboardShortcuts.reset(.captureArea, .captureFullscreen, .captureWindow, .captureText, .recordScreen)
+            KeyboardShortcuts.reset(
+                .captureAllInOne,
+                .captureArea,
+                .captureFullscreen,
+                .captureWindow,
+                .captureText,
+                .recordScreen,
+                .captureScrolling,
+                .captureAreaToClipboard,
+                .captureAreaAndShare,
+                .captureAreaAndAnnotate,
+                .screenshotHistory,
+                .captureAndTranslate,
+                .translateSelectedText
+            )
             UserDefaults.standard.set(true, forKey: migrationKey)
         }
 
-        let translationMigrationKey = "captureAndTranslateShortcutMigratedToOptionShift"
-        guard !UserDefaults.standard.bool(forKey: translationMigrationKey) else { return }
-        let oldDefault = KeyboardShortcuts.Shortcut(.t, modifiers: [.command, .shift])
-        if KeyboardShortcuts.getShortcut(for: .captureAndTranslate) == oldDefault {
-            KeyboardShortcuts.reset(.captureAndTranslate)
+        // Preserve older migration flags so existing installs don't re-run them.
+        let legacyMigrationKey = "shortcutsMigratedToOptionShift"
+        if !UserDefaults.standard.bool(forKey: legacyMigrationKey) {
+            UserDefaults.standard.set(true, forKey: legacyMigrationKey)
         }
-        UserDefaults.standard.set(true, forKey: translationMigrationKey)
+        let translationMigrationKey = "captureAndTranslateShortcutMigratedToOptionShift"
+        if !UserDefaults.standard.bool(forKey: translationMigrationKey) {
+            UserDefaults.standard.set(true, forKey: translationMigrationKey)
+        }
+    }
+
+    /// Enable Launch at Login once for installs that already finished onboarding
+    /// before this default existed. Fresh installs set it in OnboardingView.
+    private func applyDefaultLaunchAtLoginIfNeeded() {
+        let key = "didApplyDefaultLaunchAtLogin"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        if !settings.permissionsOnboardingShown {
+            LaunchAtLogin.isEnabled = true
+            settings.startAtLogin = true
+        }
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// One-time preference defaults for capture / Quick Access behaviour.
+    private func applyDefaultCapturePreferencesIfNeeded() {
+        let key = "didApplyDefaultCapturePreferences_v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        settings.screenshotAutoCopy = true
+        settings.screenshotAutoSave = true
+        settings.quickAccessPosition = .bottomRight
+        settings.quickAccessAutoClose = true
+        settings.quickAccessAutoCloseInterval = 10
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     private func registerGlobalShortcuts() {
@@ -192,6 +243,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showPreferences() {
         preferencesWindow?.show()
+    }
+
+    private func showPermissionsOnboarding() {
+        let window = OnboardingWindow(
+            permissionManager: permissionManager,
+            settings: settings,
+            onComplete: { [weak self] in
+                self?.onboardingWindow = nil
+                // Returning users who skipped the new Launch-at-Login default
+                // still get it applied once after finishing onboarding.
+                self?.applyDefaultLaunchAtLoginIfNeeded()
+            }
+        )
+        onboardingWindow = window
+        window.show()
     }
 
     /// Rebuild the live `ShareCoordinator` from current `AppSettings` + Keychain.

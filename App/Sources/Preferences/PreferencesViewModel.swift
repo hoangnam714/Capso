@@ -646,7 +646,7 @@ final class PreferencesViewModel {
     func requestPermission(_ kind: PermissionKind) async {
         switch kind {
         case .screenRecording:
-            permissionManager.openSettings(for: kind)
+            await permissionManager.requestScreenRecordingPermission()
         case .accessibility:
             permissionManager.requestAccessibilityPermission()
             permissionManager.openSettings(for: kind)

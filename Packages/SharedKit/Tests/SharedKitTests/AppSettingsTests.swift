@@ -137,10 +137,13 @@ struct AppSettingsTests {
         #expect(second.screenshotTimestampFontSize == 22)
     }
 
-    @Test("Default Quick Access position is bottomLeft")
+    @Test("Default Quick Access position is bottomRight")
     func defaultQuickAccessPosition() {
-        let settings = AppSettings()
-        #expect(settings.quickAccessPosition == .bottomLeft)
+        let suite = "test.quickAccessPosition.default"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.quickAccessPosition == .bottomRight)
     }
 
     @Test("Default shutter sound is enabled")
@@ -189,10 +192,24 @@ struct AppSettingsTests {
         #expect(second.showMenuBarIcon == false)
     }
 
-    @Test("Default auto-close interval is 5 seconds")
+    @Test("Default auto-close interval is 10 seconds")
     func defaultAutoCloseInterval() {
-        let settings = AppSettings()
-        #expect(settings.quickAccessAutoCloseInterval == 5)
+        let suite = "test.quickAccessAutoCloseInterval.default"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.quickAccessAutoCloseInterval == 10)
+        #expect(settings.quickAccessAutoClose == true)
+    }
+
+    @Test("Default screenshot auto copy and save are enabled")
+    func defaultScreenshotAutoCopyAndSave() {
+        let suite = "test.screenshotAutoCopySave.default"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.screenshotAutoCopy == true)
+        #expect(settings.screenshotAutoSave == true)
     }
 
     @Test("Pro features locked by default")
@@ -304,6 +321,15 @@ struct AppSettingsTests {
         defaults.removePersistentDomain(forName: suite)
         let settings = AppSettings(defaults: defaults)
         #expect(settings.translationAutoDismiss == .manual)
+    }
+
+    @Test("Permissions onboarding defaults to not shown")
+    func defaultPermissionsOnboardingShown() {
+        let suite = "test.permissionsOnboardingShown.default"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.permissionsOnboardingShown == false)
     }
 
     @Test("Translation onboarding flag defaults false")

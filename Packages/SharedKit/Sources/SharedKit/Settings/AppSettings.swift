@@ -189,7 +189,7 @@ public final class AppSettings: @unchecked Sendable {
 
     // MARK: General
     public var startAtLogin: Bool {
-        get { defaults.object(forKey: "startAtLogin") as? Bool ?? false }
+        get { defaults.object(forKey: "startAtLogin") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "startAtLogin") }
     }
 
@@ -254,19 +254,19 @@ public final class AppSettings: @unchecked Sendable {
     public var quickAccessPosition: QuickAccessPosition {
         get {
             guard let raw = defaults.string(forKey: "quickAccessPosition"),
-                  let value = QuickAccessPosition(rawValue: raw) else { return .bottomLeft }
+                  let value = QuickAccessPosition(rawValue: raw) else { return .bottomRight }
             return value
         }
         set { defaults.set(newValue.rawValue, forKey: "quickAccessPosition") }
     }
 
     public var quickAccessAutoClose: Bool {
-        get { defaults.object(forKey: "quickAccessAutoClose") as? Bool ?? false }
+        get { defaults.object(forKey: "quickAccessAutoClose") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "quickAccessAutoClose") }
     }
 
     public var quickAccessAutoCloseInterval: Int {
-        get { defaults.object(forKey: "quickAccessAutoCloseInterval") as? Int ?? 5 }
+        get { defaults.object(forKey: "quickAccessAutoCloseInterval") as? Int ?? 10 }
         set { defaults.set(newValue, forKey: "quickAccessAutoCloseInterval") }
     }
 
@@ -364,12 +364,12 @@ public final class AppSettings: @unchecked Sendable {
     }
 
     public var screenshotAutoCopy: Bool {
-        get { defaults.object(forKey: "screenshotAutoCopy") as? Bool ?? false }
+        get { defaults.object(forKey: "screenshotAutoCopy") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "screenshotAutoCopy") }
     }
 
     public var screenshotAutoSave: Bool {
-        get { defaults.object(forKey: "screenshotAutoSave") as? Bool ?? false }
+        get { defaults.object(forKey: "screenshotAutoSave") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "screenshotAutoSave") }
     }
 
@@ -618,6 +618,12 @@ public final class AppSettings: @unchecked Sendable {
     public var ocrOnboardingShown: Bool {
         get { defaults.object(forKey: "ocrOnboardingShown") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "ocrOnboardingShown") }
+    }
+
+    /// First-launch permissions / Launch at Login onboarding.
+    public var permissionsOnboardingShown: Bool {
+        get { defaults.object(forKey: "permissionsOnboardingShown") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "permissionsOnboardingShown") }
     }
 
     // MARK: Translation

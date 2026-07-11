@@ -3,12 +3,23 @@
     <channel>
         <title>Capso</title>
         <link>https://github.com/hoangnam714/Capso/releases</link>
-        <description>Capso updates from GitHub Releases (https://github.com/hoangnam714/Capso)</description>
+        <description>Capso updates from GitHub Releases</description>
         <language>en</language>
-        <!--
-          Publish a signed Capso-*.dmg on the GitHub Release, then regenerate this
-          file with Sparkle's generate_appcast and attach it as appcast.xml on
-          the latest release (SUFeedURL points at releases/latest/download/appcast.xml).
-        -->
+        <item>
+            <title>1.0</title>
+            <pubDate>Sat, 11 Jul 2026 14:53:35 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[
+                <h2>Capso 1.0</h2>
+                <p>Build 1</p>
+            ]]></description>
+            <enclosure
+                url="https://github.com/hoangnam714/Capso/releases/download/v1.0/Capso-1.0.dmg"
+                length="22568368"
+                type="application/octet-stream"
+            />
+        </item>
     </channel>
 </rss>

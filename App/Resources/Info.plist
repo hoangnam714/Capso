@@ -34,8 +34,6 @@
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://github.com/hoangnam714/Capso/releases/latest/download/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>c3xaKUJIOJ3qF9+51iLr1/CxskdbxDaHDjeU5Wqx9aE=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

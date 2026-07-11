@@ -35,6 +35,8 @@ CLAUDE.md
 # Git worktrees
 .worktrees/
 
-# Local-only scripts (not shipped with the open-source repo)
-scripts/
+# Local-only tooling (not shipped with the open-source repo)
 .omx/
+
+# Keep public release helpers tracked
+# scripts/  (intentionally not ignored — see Scripts/)

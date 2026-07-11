@@ -1,21 +1,24 @@
 // App/Sources/Preferences/Tabs/ShortcutSettingsView.swift
 import SwiftUI
+import AppKit
 import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
-    static let captureAllInOne = Self("captureAllInOne")
-    static let captureArea = Self("captureArea", default: .init(.one, modifiers: [.option, .shift]))
-    static let captureFullscreen = Self("captureFullscreen", default: .init(.two, modifiers: [.option, .shift]))
-    static let captureWindow = Self("captureWindow", default: .init(.three, modifiers: [.option, .shift]))
-    static let captureText = Self("captureText", default: .init(.four, modifiers: [.option, .shift]))
-    static let recordScreen = Self("recordScreen", default: .init(.five, modifiers: [.option, .shift]))
-    static let captureScrolling = Self("captureScrolling", default: .init(.six, modifiers: [.option, .shift]))
-    static let captureAreaToClipboard = Self("captureAreaToClipboard", default: .init(.seven, modifiers: [.option, .shift]))
-    static let captureAreaAndShare = Self("captureAreaAndShare", default: .init(.zero, modifiers: [.option, .shift]))
-    static let captureAreaAndAnnotate = Self("captureAreaAndAnnotate", default: .init(.eight, modifiers: [.option, .shift]))
-    static let screenshotHistory = Self("screenshotHistory", default: .init(.nine, modifiers: [.option, .shift]))
-    static let captureAndTranslate = Self("captureAndTranslate", default: .init(.t, modifiers: [.option, .shift]))
-    static let translateSelectedText = Self("translateSelectedText", default: .init(.y, modifiers: [.option, .shift]))
+    // Defaults mirror macOS Screenshots shortcuts so Capso can replace them
+    // after the user disables System Settings → Keyboard → Screenshots.
+    static let captureAllInOne = Self("captureAllInOne", default: .init(.five, modifiers: [.shift, .command]))
+    static let captureArea = Self("captureArea", default: .init(.four, modifiers: [.shift, .command]))
+    static let captureFullscreen = Self("captureFullscreen", default: .init(.three, modifiers: [.shift, .command]))
+    static let captureWindow = Self("captureWindow")
+    static let captureText = Self("captureText")
+    static let recordScreen = Self("recordScreen")
+    static let captureScrolling = Self("captureScrolling")
+    static let captureAreaToClipboard = Self("captureAreaToClipboard", default: .init(.four, modifiers: [.control, .shift, .command]))
+    static let captureAreaAndShare = Self("captureAreaAndShare")
+    static let captureAreaAndAnnotate = Self("captureAreaAndAnnotate")
+    static let screenshotHistory = Self("screenshotHistory")
+    static let captureAndTranslate = Self("captureAndTranslate")
+    static let translateSelectedText = Self("translateSelectedText")
     /// No default binding — opt-in. Self-Timer is discoverable from the
     /// menu bar; shipping a default risks colliding with whatever the user
     /// has already bound in macOS or third-party apps.
@@ -48,6 +51,35 @@ struct ShortcutSettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Shortcuts")
                 .font(.system(size: 20, weight: .bold))
+
+            // macOS Screenshots conflict note
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Capso defaults use the same keys as macOS Screenshots (⇧⌘3 / ⇧⌘4 / ⌃⇧⌘4 / ⇧⌘5). Disable those system shortcuts first, or Capso won’t receive them.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 8) {
+                    Text("System Settings → Keyboard → Keyboard Shortcuts → Screenshots")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Open Settings") {
+                        openScreenshotShortcutSettings()
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.orange.opacity(0.25), lineWidth: 0.5)
+            )
 
             // Info banner
             HStack(spacing: 8) {
@@ -93,6 +125,13 @@ struct ShortcutSettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func openScreenshotShortcutSettings() {
+        // Opens Keyboard settings; user then selects Screenshots in the sidebar.
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") {
+            NSWorkspace.shared.open(url)
         }
     }
 

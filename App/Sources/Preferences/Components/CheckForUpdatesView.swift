@@ -87,6 +87,13 @@ final class UpdateManager: NSObject, ObservableObject {
 }
 
 extension UpdateManager: SPUUpdaterDelegate {
+    /// Always resolve updates from this fork's GitHub Releases feed.
+    /// Avoids any leftover Sparkle cache / Info.plist from older Capso builds
+    /// still pointing at the previous project.
+    nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
+        "https://github.com/hoangnam714/Capso/releases/latest/download/appcast.xml"
+    }
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         guard manualCheckState == .probing else { return }
         probeFoundValidUpdate = true
