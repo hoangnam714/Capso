@@ -72,6 +72,8 @@ final class CaptureCoordinator {
         var savesOriginalCaptureToHistory: Bool {
             switch self {
             case .annotate, .inlineAnnotate, .pin:
+                // Annotate paths save History themselves before opening the editor
+                // so the session can attach a sidecar to that entry.
                 false
             case .default, .clipboard, .ocr, .save, .share:
                 true
@@ -1180,9 +1182,16 @@ final class CaptureCoordinator {
         case .clipboard:
             copyImageToClipboard(outputResult.image)
         case .annotate:
-            // Open the editor on the same screen the capture came from.
-            openAnnotationEditor(outputResult, anchorScreen: screenFor(result: result))
+            // Keep the original capture in History so Save/Copy from the editor
+            // can write a re-editable annotation sidecar against this entry.
+            historyCoordinator?.saveCapture(result: outputResult, entryID: entryID)
+            openAnnotationEditor(
+                outputResult,
+                anchorScreen: screenFor(result: result),
+                historyEntryID: entryID
+            )
         case .inlineAnnotate:
+            historyCoordinator?.saveCapture(result: outputResult, entryID: entryID)
             openInlineAnnotationEditor(outputResult, anchorScreen: screenFor(result: result))
         case .ocr:
             ocrCoordinator?.startVisualOCR(image: result.image, anchorScreen: screenFor(result: result))
@@ -1268,7 +1277,7 @@ final class CaptureCoordinator {
             guard let self, let window else { return }
             let anchor = window.targetScreen
             self.dismissQuickAccessWindow(window)
-            self.openAnnotationEditor(result, anchorScreen: anchor)
+            self.openAnnotationEditor(result, anchorScreen: anchor, historyEntryID: entryID)
         }
         window.onPreview = { [weak self, weak window] in
             guard let self, let window else { return }
@@ -1347,13 +1356,14 @@ final class CaptureCoordinator {
         }
     }
 
-    private func openAnnotationEditor(_ result: CaptureResult, anchorScreen: NSScreen? = nil) {
+    private func openAnnotationEditor(_ result: CaptureResult, anchorScreen: NSScreen? = nil, historyEntryID: UUID? = nil) {
         openAnnotationEditor(
             image: result.image,
             anchorScreen: anchorScreen ?? screenFor(result: result),
             sourceAppName: result.appName,
             sourceWindowTitle: result.windowName,
-            date: result.timestamp
+            date: result.timestamp,
+            historyEntryID: historyEntryID
         )
     }
 
@@ -1362,7 +1372,9 @@ final class CaptureCoordinator {
         anchorScreen: NSScreen? = nil,
         sourceAppName: String? = nil,
         sourceWindowTitle: String? = nil,
-        date: Date = Date()
+        date: Date = Date(),
+        sidecar: AnnotationSidecar? = nil,
+        historyEntryID: UUID? = nil
     ) {
         let screen = anchorScreen ?? NSScreen.main
 
@@ -1370,18 +1382,35 @@ final class CaptureCoordinator {
         inlineAnnotationWindow = nil
         annotationWindow = AnnotationEditorWindow(
             image: image,
+            sidecar: sidecar,
             anchorScreen: screen,
-            onSave: { [weak self] (rendered: CGImage) in
+            onSave: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
                 self?.saveRenderedImage(
                     rendered,
                     sourceAppName: sourceAppName,
                     sourceWindowTitle: sourceWindowTitle,
                     date: date
                 )
+                if let historyEntryID {
+                    self?.historyCoordinator?.persistAnnotationEdit(
+                        entryID: historyEntryID,
+                        baseImage: source,
+                        renderedImage: rendered,
+                        sidecar: document.exportSidecar()
+                    )
+                }
                 self?.annotationWindow = nil
             },
-            onCopy: { [weak self] (rendered: CGImage) in
+            onCopy: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
                 self?.copyRenderedImage(rendered)
+                if let historyEntryID {
+                    self?.historyCoordinator?.persistAnnotationEdit(
+                        entryID: historyEntryID,
+                        baseImage: source,
+                        renderedImage: rendered,
+                        sidecar: document.exportSidecar()
+                    )
+                }
                 self?.annotationWindow = nil
             },
             onPin: { [weak self] (rendered: CGImage, anchor: CGRect?) in

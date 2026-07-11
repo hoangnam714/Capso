@@ -10,15 +10,20 @@ final class AnnotationEditorWindow: NSPanel {
 
     init(
         image: CGImage,
+        sidecar: AnnotationSidecar? = nil,
         anchorScreen: NSScreen? = nil,
-        onSave: @escaping (CGImage) -> Void,
-        onCopy: @escaping (CGImage) -> Void,
+        onSave: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
+        onCopy: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
         onPin: @escaping (CGImage, CGRect?) -> Void,
         onClose: @escaping () -> Void
     ) {
         let imgW = CGFloat(image.width)
         let imgH = CGFloat(image.height)
-        self.document = AnnotationDocument(imageSize: CGSize(width: imgW, height: imgH))
+        let document = AnnotationDocument(imageSize: CGSize(width: imgW, height: imgH))
+        if let sidecar {
+            document.loadSidecar(sidecar)
+        }
+        self.document = document
 
         // Prefer the screen where the capture originated (the one the user was
         // focused on). Falling back to NSScreen.main unconditionally would
@@ -69,12 +74,12 @@ final class AnnotationEditorWindow: NSPanel {
             sourceImage: image,
             document: document,
             interactionState: interactionState,
-            onSave: { [weak self] rendered in
-                onSave(rendered)
+            onSave: { [weak self] rendered, source, document in
+                onSave(rendered, source, document)
                 self?.close()
             },
-            onCopy: { [weak self] rendered in
-                onCopy(rendered)
+            onCopy: { [weak self] rendered, source, document in
+                onCopy(rendered, source, document)
                 self?.close()
             },
             onPin: { [weak self] rendered in

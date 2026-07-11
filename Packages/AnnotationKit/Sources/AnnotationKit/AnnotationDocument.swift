@@ -187,4 +187,22 @@ public final class AnnotationDocument {
         undoStack.append(currentSnapshot())
         apply(snapshot)
     }
+
+    // MARK: - Persistence
+
+    /// Serializes the current objects (and crop) for History sidecar storage.
+    public func exportSidecar() -> AnnotationSidecar {
+        AnnotationSidecar(imageSize: imageSize, cropRect: cropRect, objects: objects)
+    }
+
+    /// Replaces document contents from a sidecar without renumbering counters
+    /// or pushing undo. Clears undo/redo so the restored state is the baseline.
+    public func loadSidecar(_ sidecar: AnnotationSidecar) {
+        imageSize = sidecar.imageSize
+        cropRect = sidecar.cropRect?.cgRect
+        objects = sidecar.makeObjects()
+        selectedObjectID = nil
+        undoStack.removeAll()
+        redoStack.removeAll()
+    }
 }

@@ -8,8 +8,10 @@ struct AnnotationEditorView: View {
     let initialSourceImage: CGImage
     let document: AnnotationDocument
     let interactionState: AnnotationEditorInteractionState
-    let onSave: (CGImage) -> Void
-    let onCopy: (CGImage) -> Void
+    /// Save receives the flattened output, the editable base image, and the live document
+    /// so History can persist both the preview PNG and a re-editable annotation sidecar.
+    let onSave: (CGImage, CGImage, AnnotationDocument) -> Void
+    let onCopy: (CGImage, CGImage, AnnotationDocument) -> Void
     let onPin: (CGImage) -> Void
     let onCancel: () -> Void
 
@@ -22,8 +24,8 @@ struct AnnotationEditorView: View {
         sourceImage: CGImage,
         document: AnnotationDocument,
         interactionState: AnnotationEditorInteractionState,
-        onSave: @escaping (CGImage) -> Void,
-        onCopy: @escaping (CGImage) -> Void,
+        onSave: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
+        onCopy: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
         onPin: @escaping (CGImage) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -132,7 +134,30 @@ struct AnnotationEditorView: View {
     /// wins so dragging it updates the editor in real time. Otherwise we
     /// fall back to the preserved value from the last text session.
     private var effectiveTextFontSize: CGFloat {
-        (currentTool == .text || isEditingText) ? lineWidth : CGFloat(savedTextFontSize)
+        (sizeControlTool == .text || currentTool == .text || isEditingText)
+            ? lineWidth
+            : CGFloat(savedTextFontSize)
+    }
+
+    /// Size slider owner: selected object type when one is selected, else the active tool.
+    private var sizeControlTool: AnnotationTool? {
+        guard let selected = document.selectedObject else { return nil }
+        switch selected {
+        case is TextObject: return .text
+        case is CounterObject: return .counter
+        case is PixelateObject: return .pixelate
+        case is FreehandObject:
+            return selected.style.opacity < 0.5 ? .highlighter : .freehand
+        case is ArrowObject: return .arrow
+        case is LineObject: return .line
+        case is RectangleObject: return .rectangle
+        case is EllipseObject: return .ellipse
+        default: return nil
+        }
+    }
+
+    private var sizeToolForPersistence: AnnotationTool {
+        sizeControlTool ?? currentTool
     }
 
     private var textFillColor: AnnotationColor? {
@@ -242,6 +267,7 @@ struct AnnotationEditorView: View {
             redactionMode: $redactionMode,
             showBeautifyPanel: $showBeautifyPanel,
             isEditingText: isEditingText,
+            sizeControlTool: sizeControlTool,
             canUndo: document.canUndo,
             canRedo: document.canRedo,
             onUndo: { document.undo(); refreshTrigger += 1 },
@@ -270,6 +296,7 @@ struct AnnotationEditorView: View {
             .onChange(of: textOutlineEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textStrokeEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
+            .onChange(of: document.selectedObjectID, handleSelectionChange)
             .onChange(of: geo.size, handleCanvasSizeChange)
         }
     }
@@ -401,7 +428,42 @@ struct AnnotationEditorView: View {
 
     private func handleLineWidthChange(oldValue: CGFloat, newValue: CGFloat) {
         updateSelectedStyle()
-        persistWidth(newValue, for: currentTool)
+        persistWidth(newValue, for: sizeToolForPersistence)
+    }
+
+    private func handleSelectionChange(oldValue: ObjectID?, newValue: ObjectID?) {
+        guard let selected = document.selectedObject else { return }
+        syncToolbar(from: selected)
+    }
+
+    private func syncToolbar(from object: any AnnotationObject) {
+        if let text = object as? TextObject {
+            if lineWidth != text.fontSize {
+                lineWidth = text.fontSize
+            }
+            currentColor = text.style.color
+            return
+        }
+        if let counter = object as? CounterObject {
+            if lineWidth != counter.radius {
+                lineWidth = counter.radius
+            }
+            currentColor = counter.style.color
+            return
+        }
+        if let pixelate = object as? PixelateObject {
+            if lineWidth != pixelate.blockSize {
+                lineWidth = pixelate.blockSize
+            }
+            redactionMode = pixelate.mode
+            return
+        }
+        if lineWidth != object.style.lineWidth {
+            lineWidth = object.style.lineWidth
+        }
+        currentColor = object.style.color
+        filled = object.style.filled
+        strokePattern = object.style.pattern
     }
 
     private func handleStrokePatternChange(oldValue: StrokePattern, newValue: StrokePattern) {
@@ -486,6 +548,7 @@ struct AnnotationEditorView: View {
                 counter.radius = lineWidth
                 counter.style = AnnotationKit.StrokeStyle(color: currentColor, lineWidth: lineWidth, filled: filled)
             } else if let text = obj as? TextObject {
+                text.fontSize = lineWidth
                 text.fillColor = textFillColor
                 text.outlineColor = textOutlineColor
                 text.glyphStrokeColor = textGlyphStrokeColor
@@ -522,7 +585,7 @@ struct AnnotationEditorView: View {
         commitEditingTrigger += 1
         DispatchQueue.main.async {
             if let rendered = renderedOutputImage() {
-                onSave(rendered)
+                onSave(rendered, sourceImage, document)
             }
         }
     }
@@ -534,7 +597,7 @@ struct AnnotationEditorView: View {
         commitEditingTrigger += 1
         DispatchQueue.main.async {
             if let rendered = renderedOutputImage() {
-                onCopy(rendered)
+                onCopy(rendered, sourceImage, document)
             }
         }
     }

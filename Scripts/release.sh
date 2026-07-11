@@ -85,11 +85,11 @@ APPCAST_PATH="$ROOT/appcast.xml"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "→ Building DMG…"
-  build_args=()
   if [[ "$NOTARIZE" -eq 1 ]]; then
-    build_args+=(--notarize)
+    ./Scripts/build-dmg.sh --notarize
+  else
+    ./Scripts/build-dmg.sh
   fi
-  ./Scripts/build-dmg.sh "${build_args[@]}"
 else
   echo "→ Skipping build (using existing DMG)"
 fi

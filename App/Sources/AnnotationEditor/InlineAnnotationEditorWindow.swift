@@ -412,6 +412,7 @@ private struct InlineAnnotationEditorView: View {
                     filled: filled
                 )
             } else if let text = obj as? TextObject {
+                text.fontSize = lineWidth
                 text.fillColor = textFillColor
                 text.outlineColor = textOutlineColor
                 text.glyphStrokeColor = textGlyphStrokeColor

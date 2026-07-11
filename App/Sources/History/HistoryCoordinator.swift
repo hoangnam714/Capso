@@ -2,6 +2,7 @@
 import AppKit
 import AVFoundation
 import Observation
+import AnnotationKit
 import CaptureKit
 import ExportKit
 import HistoryKit
@@ -407,17 +408,185 @@ final class HistoryCoordinator {
     }
 
     func openInAnnotation(_ entry: HistoryEntry) {
-        guard isScreenshot(entry),
-              let url = fullImageURL(for: entry),
-              let nsImage = NSImage(contentsOf: url),
-              let cgImage = ImageUtilities.cgImage(from: nsImage) else { return }
+        guard isScreenshot(entry) else { return }
+
+        let sidecar = loadAnnotationSidecar(for: entry)
+        let sourceImage = loadAnnotationSourceImage(for: entry)
+
+        // Prefer unbaked source + objects. If only a baked preview remains,
+        // open without the sidecar to avoid double-drawing.
+        let image: CGImage?
+        let restoredSidecar: AnnotationSidecar?
+        if let sourceImage, sidecar != nil {
+            image = sourceImage
+            restoredSidecar = sidecar
+        } else if sidecar != nil {
+            image = loadFullImage(for: entry)
+            restoredSidecar = nil
+        } else {
+            image = loadFullImage(for: entry)
+            restoredSidecar = nil
+        }
+
+        guard let cgImage = image else { return }
         captureCoordinator?.openAnnotationEditor(
             image: cgImage,
             anchorScreen: NSScreen.main,
             sourceAppName: entry.sourceAppName,
             sourceWindowTitle: entry.sourceWindowTitle,
-            date: entry.createdAt
+            date: entry.createdAt,
+            sidecar: restoredSidecar,
+            historyEntryID: entry.id
         )
+    }
+
+    /// Unbaked original used for re-editing (written next to the sidecar).
+    func loadAnnotationSourceImage(for entry: HistoryEntry) -> CGImage? {
+        guard let store else { return nil }
+        let sourceURL = store.entriesDirectory
+            .appendingPathComponent(entry.id.uuidString, isDirectory: true)
+            .appendingPathComponent(Self.annotationSourceFileName)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return nil }
+        return loadCGImage(from: sourceURL)
+    }
+
+    /// Base image used for re-editing: prefers `source.png` when a prior
+    /// annotate session saved an un-baked original next to the sidecar.
+    func loadAnnotationBaseImage(for entry: HistoryEntry) -> CGImage? {
+        if let source = loadAnnotationSourceImage(for: entry) {
+            return source
+        }
+        return loadFullImage(for: entry)
+    }
+
+    func loadAnnotationSidecar(for entry: HistoryEntry) -> AnnotationSidecar? {
+        guard let url = annotationURL(for: entry),
+              let data = try? Data(contentsOf: url),
+              let sidecar = try? AnnotationSidecar.decode(from: data) else {
+            return nil
+        }
+        return sidecar
+    }
+
+    func annotationURL(for entry: HistoryEntry) -> URL? {
+        guard let store else { return nil }
+        let entryDir = store.entriesDirectory
+            .appendingPathComponent(entry.id.uuidString, isDirectory: true)
+        // Prefer the DB filename, but also discover the conventional sidecar
+        // so a partial write still restores objects on reopen.
+        let candidates = [
+            entry.annotationFileName,
+            Self.annotationSidecarFileName,
+        ].compactMap { $0 }
+        for name in candidates {
+            let url = entryDir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    /// Writes base + rendered PNGs, annotation sidecar, and refreshes the
+    /// history thumbnail so reopening Annotate restores drawable objects.
+    func persistAnnotationEdit(
+        entryID: UUID,
+        baseImage: CGImage,
+        renderedImage: CGImage,
+        sidecar: AnnotationSidecar
+    ) {
+        guard settings.historyEnabled, let store else { return }
+
+        let entryDir = store.entriesDirectory
+            .appendingPathComponent(entryID.uuidString, isDirectory: true)
+        let annotationName = Self.annotationSidecarFileName
+        let sourceName = Self.annotationSourceFileName
+
+        guard let baseData = ImageUtilities.pngData(from: baseImage),
+              let renderedData = ImageUtilities.pngData(from: renderedImage),
+              let sidecarData = try? sidecar.encoded() else {
+            print("Failed to encode annotation edit for \(entryID)")
+            return
+        }
+        let thumbData = ThumbnailGenerator.generateThumbnail(from: renderedImage)
+        let renderedWidth = renderedImage.width
+        let renderedHeight = renderedImage.height
+        let renderedByteCount = Int64(renderedData.count)
+
+        Task.detached(priority: .utility) {
+            do {
+                let fm = FileManager.default
+                try fm.createDirectory(at: entryDir, withIntermediateDirectories: true)
+
+                try baseData.write(to: entryDir.appendingPathComponent(sourceName), options: .atomic)
+                try sidecarData.write(
+                    to: entryDir.appendingPathComponent(annotationName),
+                    options: .atomic
+                )
+
+                // Resolve the full-image / thumbnail names from the DB when
+                // available; fall back to the conventional capture filenames
+                // so we still persist while saveCapture is racing to insert.
+                var fullName = "capture.png"
+                var thumbName = "thumbnail.jpg"
+                var existing: HistoryEntry?
+                for _ in 0..<30 {
+                    existing = try? store.fetch(id: entryID)
+                    if let existing {
+                        fullName = existing.fullImageFileName
+                        thumbName = existing.thumbnailFileName
+                        break
+                    }
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                try renderedData.write(
+                    to: entryDir.appendingPathComponent(fullName),
+                    options: .atomic
+                )
+                if let thumbData {
+                    try thumbData.write(
+                        to: entryDir.appendingPathComponent(thumbName),
+                        options: .atomic
+                    )
+                }
+
+                if let existing {
+                    let updated = HistoryEntry(
+                        id: existing.id,
+                        createdAt: existing.createdAt,
+                        captureMode: existing.captureMode,
+                        imageWidth: renderedWidth,
+                        imageHeight: renderedHeight,
+                        sourceAppName: existing.sourceAppName,
+                        sourceAppBundleID: existing.sourceAppBundleID,
+                        sourceWindowTitle: existing.sourceWindowTitle,
+                        thumbnailFileName: thumbName,
+                        fullImageFileName: fullName,
+                        annotationFileName: annotationName,
+                        fileSize: renderedByteCount,
+                        cloudURL: existing.cloudURL
+                    )
+                    try store.update(updated)
+                } else {
+                    print("Annotation sidecar written but history entry \(entryID) was not found")
+                }
+
+                await MainActor.run {
+                    self.loadEntries()
+                }
+            } catch {
+                print("Failed to persist annotation edit: \(error)")
+            }
+        }
+    }
+
+    private static let annotationSidecarFileName = "annotations.json"
+    private static let annotationSourceFileName = "source.png"
+
+    private func loadCGImage(from url: URL) -> CGImage? {
+        guard let nsImage = NSImage(contentsOf: url) else { return nil }
+        return ImageUtilities.cgImage(from: nsImage)
     }
 
     func annotateFromClipboard() {

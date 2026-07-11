@@ -101,6 +101,12 @@ public final class HistoryStore: Sendable {
         }
     }
 
+    public func fetch(id: UUID) throws -> HistoryEntry? {
+        try dbQueue.read { db in
+            try HistoryEntry.fetchOne(db, id: id)
+        }
+    }
+
     public func delete(id: UUID) throws {
         try dbQueue.write { db in
             _ = try HistoryEntry.deleteOne(db, id: id)

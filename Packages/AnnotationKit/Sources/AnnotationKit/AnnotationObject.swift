@@ -23,7 +23,7 @@ public enum RedactionMode: Int, Codable, CaseIterable, Sendable {
 
 public struct ObjectID: Hashable, Sendable {
     public let value: UUID
-    public init() { self.value = UUID() }
+    public init(value: UUID = UUID()) { self.value = value }
 }
 
 public enum StrokePattern: String, Codable, CaseIterable, Sendable {
@@ -43,7 +43,7 @@ public enum StrokePattern: String, Codable, CaseIterable, Sendable {
     }
 }
 
-public struct StrokeStyle: Sendable {
+public struct StrokeStyle: Sendable, Codable {
     public var color: AnnotationColor
     public var lineWidth: CGFloat
     public var opacity: CGFloat
@@ -141,6 +141,14 @@ public struct AnnotationColor: RawRepresentable, Codable, CaseIterable, Hashable
     }
 
     public var nsColor: NSColor { NSColor(cgColor: cgColor)! }
+
+    /// Black or white label color that stays readable on top of this fill.
+    public var contrastingLabelNSColor: NSColor {
+        guard let rgb = nsColor.usingColorSpace(.deviceRGB) else { return .white }
+        let luminance =
+            (0.299 * rgb.redComponent) + (0.587 * rgb.greenComponent) + (0.114 * rgb.blueComponent)
+        return luminance > 0.62 ? .black : .white
+    }
 
     public var displayName: String {
         rawValue.hasPrefix("#") ? rawValue : rawValue.capitalized

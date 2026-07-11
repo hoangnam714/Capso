@@ -19,6 +19,10 @@ struct AnnotationToolbar: View {
     /// the size slider behaves as a Font Size control regardless of the
     /// currently selected tool — so users can keep tuning size while typing.
     var isEditingText: Bool = false
+    /// Tool whose size the slider should control. When a concrete object is
+    /// selected (often while `currentTool == .select`), pass that object's
+    /// type so the slider keeps its per-kind range / label.
+    var sizeControlTool: AnnotationTool? = nil
     let canUndo: Bool
     let canRedo: Bool
     let onUndo: () -> Void
@@ -29,10 +33,15 @@ struct AnnotationToolbar: View {
     let onCancel: () -> Void
     let onCrop: () -> Void
 
+    /// Tool that owns the size slider (selection overrides the active tool).
+    private var effectiveSizeTool: AnnotationTool {
+        sizeControlTool ?? currentTool
+    }
+
     /// The size slider serves multiple tools: in text / editing mode it means
     /// font size; for other tools it retains its existing role.
     private var isFontSizeMode: Bool {
-        currentTool == .text || isEditingText
+        effectiveSizeTool == .text || isEditingText
     }
 
     var body: some View {
@@ -128,11 +137,11 @@ struct AnnotationToolbar: View {
     private var strokeGroup: some View {
         HStack(spacing: 8) {
             if isFontSizeMode {
-                // Text tool or mid-edit: slider becomes a font-size control.
+                // Text tool, selected text, or mid-edit: font-size control.
                 Slider(value: $lineWidth, in: 12...120, step: 1)
                     .frame(width: 80)
                     .help("Font Size: \(Int(lineWidth))")
-            } else if currentTool == .pixelate {
+            } else if effectiveSizeTool == .pixelate {
                 Picker("", selection: $redactionMode) {
                     ForEach(RedactionMode.allCases, id: \.self) { mode in
                         Text(mode.label).tag(mode)
@@ -148,20 +157,20 @@ struct AnnotationToolbar: View {
                         .frame(width: 80)
                         .help("Block Size: \(Int(lineWidth))")
                 }
-            } else if currentTool == .counter {
+            } else if effectiveSizeTool == .counter {
                 Slider(value: $lineWidth, in: 12...40, step: 1)
                     .frame(width: 80)
                     .help("Counter Size: \(Int(lineWidth))")
-            } else if currentTool == .highlighter {
+            } else if effectiveSizeTool == .highlighter {
                 Slider(value: $lineWidth, in: 10...100, step: 2)
                     .frame(width: 80)
                     .help("Highlighter Width: \(Int(lineWidth))")
-            } else {
+            } else if effectiveSizeTool != .select {
                 Slider(value: $lineWidth, in: 1...40, step: 1)
                     .frame(width: 80)
                     .help("Line Width: \(Int(lineWidth))")
             }
-            if currentTool == .arrow || currentTool == .line {
+            if effectiveSizeTool == .arrow || effectiveSizeTool == .line {
                 Picker("", selection: $strokePattern) {
                     ForEach(StrokePattern.allCases, id: \.self) { pattern in
                         StrokePatternGlyph(pattern: pattern)
@@ -174,10 +183,11 @@ struct AnnotationToolbar: View {
                 .help("Stroke Pattern")
             }
             // Fill toggle is meaningless for counter / highlighter / text.
-            if currentTool != .counter
-                && currentTool != .arrow
-                && currentTool != .line
-                && currentTool != .highlighter
+            if effectiveSizeTool != .counter
+                && effectiveSizeTool != .arrow
+                && effectiveSizeTool != .line
+                && effectiveSizeTool != .highlighter
+                && effectiveSizeTool != .select
                 && !isFontSizeMode {
                 Toggle(isOn: $filled) {
                     Image(systemName: filled ? "square.fill" : "square")

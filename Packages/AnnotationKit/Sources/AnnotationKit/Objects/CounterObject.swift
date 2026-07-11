@@ -42,7 +42,7 @@ public final class CounterObject: AnnotationObject, @unchecked Sendable {
         let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor.white,
+            .foregroundColor: style.color.contrastingLabelNSColor,
         ]
         let textSize = text.size(withAttributes: attributes)
         let textOrigin = CGPoint(
