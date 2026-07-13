@@ -186,8 +186,9 @@ public enum ScreenCaptureManager {
         config.captureResolution = .best
         config.showsCursor = showsCursor
         config.sourceRect = rect
-        config.width = Int(rect.width) * 2
-        config.height = Int(rect.height) * 2
+        let scaleFactor = CGFloat(filter.pointPixelScale)
+        config.width = Int(rect.width * scaleFactor)
+        config.height = Int(rect.height * scaleFactor)
 
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: filter,

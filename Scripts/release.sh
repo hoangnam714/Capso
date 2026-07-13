@@ -2,13 +2,13 @@
 # Build Capso DMG and publish a GitHub Release (with DMG + appcast.xml).
 #
 # Usage:
-#   ./Scripts/release.sh                 # build DMG + create/update Release
-#   ./Scripts/release.sh --skip-build    # reuse existing build/Capso-*.dmg
-#   ./Scripts/release.sh --notarize      # build with notarization, then release
-#   ./Scripts/release.sh --notes "..."   # custom release notes
+#   ./Scripts/release.sh                    # notarized build + create/update Release
+#   ./Scripts/release.sh --skip-build       # reuse existing build/Capso-*.dmg
+#   ./Scripts/release.sh --skip-notarize    # signed-only build (not for public DMG)
+#   ./Scripts/release.sh --notes "..."      # custom release notes
 #
 # Env:
-#   TEAM_ID / APPLE_ID / APPLE_APP_PASSWORD  (same as build-dmg.sh)
+#   TEAM_ID / APPLE_ID / APPLE_APP_PASSWORD  (same as build-dmg.sh; required unless --skip-notarize)
 #   GH_TOKEN or `gh auth login` required for uploading
 set -euo pipefail
 
@@ -17,19 +17,20 @@ cd "$ROOT"
 
 REPO="${REPO:-hoangnam714/Capso}"
 SKIP_BUILD=0
-NOTARIZE=0
+NOTARIZE=1
 NOTES=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1; shift ;;
     --notarize) NOTARIZE=1; shift ;;
+    --skip-notarize) NOTARIZE=0; shift ;;
     --notes)
       NOTES="${2:-}"
       shift 2
       ;;
     -h|--help)
-      sed -n '2,14p' "$0"
+      sed -n '2,13p' "$0"
       exit 0
       ;;
     *)
@@ -86,9 +87,9 @@ APPCAST_PATH="$ROOT/appcast.xml"
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "→ Building DMG…"
   if [[ "$NOTARIZE" -eq 1 ]]; then
-    ./Scripts/build-dmg.sh --notarize
-  else
     ./Scripts/build-dmg.sh
+  else
+    ./Scripts/build-dmg.sh --skip-notarize
   fi
 else
   echo "→ Skipping build (using existing DMG)"

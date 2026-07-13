@@ -17,6 +17,8 @@ struct QuickAccessView: View {
     let onUploadSucceeded: ((String) -> Void)?
     let onCopy: () -> Void
     let onSave: () -> Void
+    let onShare: () -> Void
+    let onDelete: () -> Void
     let onAnnotate: () -> Void
     let onOCR: () -> Void
     let onTranslate: () -> Void
@@ -37,7 +39,7 @@ struct QuickAccessView: View {
     }
 
     private enum HoverAction: Hashable {
-        case copy, save, annotate, ocr, translate, pin, upload, linkCopied
+        case copy, save, share, delete, annotate, ocr, translate, pin, upload, linkCopied
     }
 
     private var isRevealed: Bool { isHovering || isFocused }
@@ -212,6 +214,8 @@ struct QuickAccessView: View {
         switch action {
         case .copy:      return "⌘C"
         case .save:      return "⌘S"
+        case .share:     return "⌘⇧I"
+        case .delete:    return "⌫"
         case .annotate:  return "⌘E"
         case .ocr:       return "⌘⇧O"
         case .translate: return "⌘⇧T"
@@ -229,7 +233,9 @@ struct QuickAccessView: View {
     private var toolbar: some View {
         HStack(spacing: 2) {
             toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-            toolButton(.save, icon: "square.and.arrow.down", isPrimary: true, action: onSave)
+            toolButton(.save, icon: "arrow.down.doc", isPrimary: true, action: onSave)
+            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            toolButton(.delete, icon: "trash", action: onDelete)
             if shareCoordinator != nil {
                 toolDivider
                 uploadButton
@@ -350,6 +356,7 @@ struct QuickAccessView: View {
     private func toolForeground(_ kind: HoverAction, isPrimary: Bool) -> Color {
         if isPrimary { return .white }
         if kind == .linkCopied { return .green }
+        if kind == .delete { return Color.red.opacity(hoveredAction == kind ? 0.96 : 0.78) }
         return Color.primary.opacity(hoveredAction == kind ? 0.96 : 0.78)
     }
 
@@ -364,6 +371,8 @@ struct QuickAccessView: View {
         switch kind {
         case .copy:      return ("c", [.command])
         case .save:      return ("s", [.command])
+        case .share:     return ("i", [.command, .shift])
+        case .delete:    return (.delete, [])
         case .annotate:  return ("e", [.command])
         case .ocr:       return ("o", [.command, .shift])
         case .translate: return ("t", [.command, .shift])
@@ -390,6 +399,8 @@ struct QuickAccessView: View {
         switch kind {
         case .copy: return String(localized: "Copy")
         case .save: return String(localized: "Save")
+        case .share: return String(localized: "Share")
+        case .delete: return String(localized: "Delete")
         case .annotate: return String(localized: "Annotate")
         case .ocr: return String(localized: "Extract Text")
         case .translate: return String(localized: "Translate")
@@ -403,6 +414,8 @@ struct QuickAccessView: View {
         switch kind {
         case .copy: return String(localized: "Copy to clipboard")
         case .save: return String(localized: "Save screenshot")
+        case .share: return String(localized: "Share to other apps")
+        case .delete: return String(localized: "Discard capture and restore previous clipboard")
         case .annotate: return String(localized: "Open annotation editor")
         case .ocr: return String(localized: "Extract text from screenshot")
         case .translate: return String(localized: "Translate text in screenshot")

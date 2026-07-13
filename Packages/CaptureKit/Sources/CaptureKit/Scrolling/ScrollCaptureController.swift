@@ -35,9 +35,16 @@ public struct ScrollCaptureProgress: Sendable {
 }
 
 public final class ScrollCaptureController: @unchecked Sendable {
+    private enum FinishReason {
+        case running
+        case completed
+        case cancelled
+    }
+
     private let config: ScrollCaptureConfig
     private let stitcher = ScrollStitcher()
     private var isCancelled = false
+    private var finishReason: FinishReason = .running
     private var frameCount = 0
 
     /// A/B frame model
@@ -63,8 +70,21 @@ public final class ScrollCaptureController: @unchecked Sendable {
         }
     }
 
-    public func stop() {
+    /// User tapped Done — stop looping and return the stitched image.
+    public func complete() {
+        finishReason = .completed
         isCancelled = true
+    }
+
+    /// User cancelled — stop looping and discard the result.
+    public func cancel() {
+        finishReason = .cancelled
+        isCancelled = true
+    }
+
+    /// Legacy alias for `complete()` (Done).
+    public func stop() {
+        complete()
     }
 
     // MARK: - Capture Loop
@@ -86,7 +106,7 @@ public final class ScrollCaptureController: @unchecked Sendable {
             frameCount: frameCount
         ))
 
-        // Main capture loop — runs until user clicks Done (isCancelled)
+        // Main capture loop — runs until user clicks Done / Cancel
         // or max height is reached. No auto-stop on pause/jitter.
         while !isCancelled {
             if stitcher.totalHeight >= config.maxHeight { break }
@@ -100,11 +120,14 @@ public final class ScrollCaptureController: @unchecked Sendable {
             if let dataA = shotA?.dataProvider?.data,
                let dataB = shotB.dataProvider?.data,
                CFDataGetLength(dataA) == CFDataGetLength(dataB),
-               memcmp(CFDataGetBytePtr(dataA)!, CFDataGetBytePtr(dataB)!, CFDataGetLength(dataA)) == 0 {
+               let ptrA = CFDataGetBytePtr(dataA),
+               let ptrB = CFDataGetBytePtr(dataB),
+               memcmp(ptrA, ptrB, CFDataGetLength(dataA)) == 0 {
                 continue
             }
 
-            guard let rawOffset = detectOffset(imageA: shotA!, imageB: shotB) else {
+            guard let imageA = shotA,
+                  let rawOffset = detectOffset(imageA: imageA, imageB: shotB) else {
                 shotA = shotB
                 continue
             }
@@ -126,6 +149,9 @@ public final class ScrollCaptureController: @unchecked Sendable {
             shotA = shotB
         }
 
+        if finishReason == .cancelled {
+            return nil
+        }
         return stitcher.mergedImage
     }
 

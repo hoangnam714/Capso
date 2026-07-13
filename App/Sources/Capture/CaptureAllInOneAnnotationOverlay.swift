@@ -381,6 +381,9 @@ final class AllInOneAnnotationSession: ObservableObject {
     @Published var textFillEnabled: Bool
     @Published var textOutlineEnabled: Bool
     @Published var textStrokeEnabled: Bool
+    @Published var textBoldEnabled: Bool
+    @Published var textItalicEnabled: Bool
+    @Published var textUnderlineEnabled: Bool
     @Published var lineWidth: CGFloat
     @Published var strokePattern: StrokePattern
     @Published var redactionMode: RedactionMode
@@ -410,6 +413,9 @@ final class AllInOneAnnotationSession: ObservableObject {
         self.textFillEnabled = UserDefaults.standard.bool(forKey: "annotationTextFillEnabled")
         self.textOutlineEnabled = UserDefaults.standard.bool(forKey: "annotationTextOutlineEnabled")
         self.textStrokeEnabled = Self.storedTextStrokeEnabled()
+        self.textBoldEnabled = UserDefaults.standard.bool(forKey: "annotationTextBoldEnabled")
+        self.textItalicEnabled = UserDefaults.standard.bool(forKey: "annotationTextItalicEnabled")
+        self.textUnderlineEnabled = UserDefaults.standard.bool(forKey: "annotationTextUnderlineEnabled")
         self.lineWidth = Self.storedWidth(for: Self.storedTool())
         self.strokePattern = Self.storedStrokePattern()
         self.redactionMode = Self.storedRedactionMode()
@@ -499,9 +505,13 @@ final class AllInOneAnnotationSession: ObservableObject {
                     filled: filled
                 )
             } else if let text = obj as? TextObject {
+                text.fontSize = lineWidth
                 text.fillColor = textFillColor
                 text.outlineColor = textOutlineColor
                 text.glyphStrokeColor = textGlyphStrokeColor
+                text.isBold = textBoldEnabled
+                text.isItalic = textItalicEnabled
+                text.isUnderline = textUnderlineEnabled
                 text.style = currentStyle
             } else {
                 obj.style = currentStyle
@@ -607,6 +617,9 @@ private struct AllInOneAnnotationCanvasView: View {
             textFillColor: session.textFillColor,
             textOutlineColor: session.textOutlineColor,
             textGlyphStrokeColor: session.textGlyphStrokeColor,
+            textBold: session.textBoldEnabled,
+            textItalic: session.textItalicEnabled,
+            textUnderline: session.textUnderlineEnabled,
             zoomScale: session.displayScale,
             refreshTrigger: session.refreshTrigger,
             textRegions: session.textRegions,
@@ -616,11 +629,14 @@ private struct AllInOneAnnotationCanvasView: View {
                 session.document.clearSelection()
                 session.switchTool(.select)
             },
-            onTextEditingStarted: { fontSize, hasFill, hasOutline, hasStroke in
+            onTextEditingStarted: { fontSize, hasFill, hasOutline, hasStroke, isBold, isItalic, isUnderline in
                 session.isEditingText = true
                 session.textFillEnabled = hasFill
                 session.textOutlineEnabled = hasOutline
                 session.textStrokeEnabled = hasStroke
+                session.textBoldEnabled = isBold
+                session.textItalicEnabled = isItalic
+                session.textUnderlineEnabled = isUnderline
                 if session.lineWidth != fontSize {
                     session.lineWidth = fontSize
                 }
@@ -636,7 +652,7 @@ private struct AllInOneAnnotationCanvasView: View {
 
 private struct AllInOneAnnotationToolbarView: View {
     private enum TextEffectAction: Hashable {
-        case fill, outline, trace
+        case fill, outline, trace, bold, italic, underline
     }
 
     @ObservedObject var session: AllInOneAnnotationSession
@@ -887,6 +903,39 @@ private struct AllInOneAnnotationToolbarView: View {
                 session.textStrokeEnabled.toggle()
                 return session.textStrokeEnabled
             }
+            textEffectGlyphButton(
+                .bold,
+                glyph: "B",
+                label: String(localized: "Bold"),
+                help: "Bold",
+                isActive: session.textBoldEnabled,
+                defaultsKey: "annotationTextBoldEnabled"
+            ) {
+                session.textBoldEnabled.toggle()
+                return session.textBoldEnabled
+            }
+            textEffectGlyphButton(
+                .italic,
+                glyph: "I",
+                label: String(localized: "Italic"),
+                help: "Italic",
+                isActive: session.textItalicEnabled,
+                defaultsKey: "annotationTextItalicEnabled"
+            ) {
+                session.textItalicEnabled.toggle()
+                return session.textItalicEnabled
+            }
+            textEffectGlyphButton(
+                .underline,
+                glyph: "U",
+                label: String(localized: "Underline"),
+                help: "Underline",
+                isActive: session.textUnderlineEnabled,
+                defaultsKey: "annotationTextUnderlineEnabled"
+            ) {
+                session.textUnderlineEnabled.toggle()
+                return session.textUnderlineEnabled
+            }
         }
     }
 
@@ -916,6 +965,30 @@ private struct AllInOneAnnotationToolbarView: View {
                 ) {
                     session.textStrokeEnabled.toggle()
                     return session.textStrokeEnabled
+                }
+                textEffectButton(
+                    title: "Bold",
+                    isActive: session.textBoldEnabled,
+                    defaultsKey: "annotationTextBoldEnabled"
+                ) {
+                    session.textBoldEnabled.toggle()
+                    return session.textBoldEnabled
+                }
+                textEffectButton(
+                    title: "Italic",
+                    isActive: session.textItalicEnabled,
+                    defaultsKey: "annotationTextItalicEnabled"
+                ) {
+                    session.textItalicEnabled.toggle()
+                    return session.textItalicEnabled
+                }
+                textEffectButton(
+                    title: "Underline",
+                    isActive: session.textUnderlineEnabled,
+                    defaultsKey: "annotationTextUnderlineEnabled"
+                ) {
+                    session.textUnderlineEnabled.toggle()
+                    return session.textUnderlineEnabled
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

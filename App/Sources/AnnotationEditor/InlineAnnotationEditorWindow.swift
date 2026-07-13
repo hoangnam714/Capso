@@ -15,6 +15,7 @@ final class InlineAnnotationEditorWindow: NSPanel {
         screenLocalRect: CGRect,
         onSave: @escaping (CGImage) -> Void,
         onCopy: @escaping (CGImage) -> Void,
+        onShare: @escaping (CGImage) -> Void,
         onPin: @escaping (CGImage, CGRect?) -> Void,
         onClose: @escaping () -> Void
     ) {
@@ -61,6 +62,9 @@ final class InlineAnnotationEditorWindow: NSPanel {
             onCopy: { [weak self] rendered in
                 onCopy(rendered)
                 self?.close()
+            },
+            onShare: { rendered in
+                onShare(rendered)
             },
             onPin: { [weak self] rendered in
                 onPin(rendered, pinAnchor)
@@ -132,6 +136,7 @@ private struct InlineAnnotationEditorView: View {
     let screenLocalRect: CGRect
     let onSave: (CGImage) -> Void
     let onCopy: (CGImage) -> Void
+    let onShare: (CGImage) -> Void
     let onPin: (CGImage) -> Void
     let onCancel: () -> Void
 
@@ -148,6 +153,9 @@ private struct InlineAnnotationEditorView: View {
     @AppStorage("annotationTextFillEnabled") private var textFillEnabled: Bool = false
     @AppStorage("annotationTextOutlineEnabled") private var textOutlineEnabled: Bool = false
     @AppStorage("annotationTextStrokeEnabled") private var textStrokeEnabled: Bool = true
+    @AppStorage("annotationTextBoldEnabled") private var textBoldEnabled: Bool = false
+    @AppStorage("annotationTextItalicEnabled") private var textItalicEnabled: Bool = false
+    @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
 
     @State private var lineWidth: CGFloat = 3
     @State private var strokePattern: StrokePattern = .solid
@@ -242,6 +250,9 @@ private struct InlineAnnotationEditorView: View {
         .onChange(of: textFillEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textOutlineEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textStrokeEnabled) { _, _ in updateSelectedStyle() }
+        .onChange(of: textBoldEnabled) { _, _ in updateSelectedStyle() }
+        .onChange(of: textItalicEnabled) { _, _ in updateSelectedStyle() }
+        .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
     }
 
@@ -261,6 +272,9 @@ private struct InlineAnnotationEditorView: View {
             textFillColor: textFillColor,
             textOutlineColor: textOutlineColor,
             textGlyphStrokeColor: textGlyphStrokeColor,
+            textBold: textBoldEnabled,
+            textItalic: textItalicEnabled,
+            textUnderline: textUnderlineEnabled,
             zoomScale: displayScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -292,6 +306,9 @@ private struct InlineAnnotationEditorView: View {
             textFillEnabled: $textFillEnabled,
             textOutlineEnabled: $textOutlineEnabled,
             textStrokeEnabled: $textStrokeEnabled,
+            textBoldEnabled: $textBoldEnabled,
+            textItalicEnabled: $textItalicEnabled,
+            textUnderlineEnabled: $textUnderlineEnabled,
             redactionMode: $redactionMode,
             isEditingText: isEditingText,
             canUndo: document.canUndo,
@@ -300,6 +317,7 @@ private struct InlineAnnotationEditorView: View {
             onRedo: redo,
             onCancel: onCancel,
             onCopy: copy,
+            onShare: share,
             onPin: pin,
             onSave: save
         )
@@ -350,13 +368,19 @@ private struct InlineAnnotationEditorView: View {
         fontSize: CGFloat,
         hasFill: Bool,
         hasOutline: Bool,
-        hasStroke: Bool
+        hasStroke: Bool,
+        isBold: Bool,
+        isItalic: Bool,
+        isUnderline: Bool
     ) {
         isEditingText = true
         interactionState.isEditingText = true
         textFillEnabled = hasFill
         textOutlineEnabled = hasOutline
         textStrokeEnabled = hasStroke
+        textBoldEnabled = isBold
+        textItalicEnabled = isItalic
+        textUnderlineEnabled = isUnderline
         if lineWidth != fontSize {
             lineWidth = fontSize
         }
@@ -416,6 +440,9 @@ private struct InlineAnnotationEditorView: View {
                 text.fillColor = textFillColor
                 text.outlineColor = textOutlineColor
                 text.glyphStrokeColor = textGlyphStrokeColor
+                text.isBold = textBoldEnabled
+                text.isItalic = textItalicEnabled
+                text.isUnderline = textUnderlineEnabled
                 text.style = currentStyle
             } else {
                 obj.style = currentStyle
@@ -454,6 +481,15 @@ private struct InlineAnnotationEditorView: View {
             }
         }
     }
+
+    private func share() {
+        commitEditingTrigger += 1
+        DispatchQueue.main.async {
+            if let rendered = renderedOutputImage() {
+                onShare(rendered)
+            }
+        }
+    }
 }
 
 private struct DimmingCutout: Shape {
@@ -476,6 +512,9 @@ private struct InlineAnnotationToolbar: View {
     @Binding var textFillEnabled: Bool
     @Binding var textOutlineEnabled: Bool
     @Binding var textStrokeEnabled: Bool
+    @Binding var textBoldEnabled: Bool
+    @Binding var textItalicEnabled: Bool
+    @Binding var textUnderlineEnabled: Bool
     @Binding var redactionMode: RedactionMode
 
     let isEditingText: Bool
@@ -485,6 +524,7 @@ private struct InlineAnnotationToolbar: View {
     let onRedo: () -> Void
     let onCancel: () -> Void
     let onCopy: () -> Void
+    let onShare: () -> Void
     let onPin: () -> Void
     let onSave: () -> Void
 
@@ -619,9 +659,11 @@ private struct InlineAnnotationToolbar: View {
             iconButton(systemName: "xmark", help: "Close", action: onCancel)
                 .keyboardShortcut(.escape, modifiers: [])
             copyActionButton
+            iconButton(systemName: "square.and.arrow.up", help: "Share", action: onShare)
+                .keyboardShortcut("i", modifiers: [.command, .shift])
             iconButton(systemName: "pin", help: "Pin to Screen", action: onPin)
                 .keyboardShortcut("p", modifiers: .command)
-            iconButton(systemName: "square.and.arrow.down", help: "Save", isPrimary: true, action: onSave)
+            iconButton(systemName: "arrow.down.doc", help: "Save", isPrimary: true, action: onSave)
                 .keyboardShortcut("s", modifiers: .command)
         }
     }
@@ -643,6 +685,9 @@ private struct InlineAnnotationToolbar: View {
                 textEffectToggle("Fill", isOn: $textFillEnabled, help: "Text Fill")
                 textEffectToggle("Outline", isOn: $textOutlineEnabled, help: "Text Box Outline")
                 textEffectToggle("Trace", isOn: $textStrokeEnabled, help: "Text Trace")
+                textEffectToggle("Bold", isOn: $textBoldEnabled, help: "Bold")
+                textEffectToggle("Italic", isOn: $textItalicEnabled, help: "Italic")
+                textEffectToggle("Underline", isOn: $textUnderlineEnabled, help: "Underline")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

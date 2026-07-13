@@ -57,12 +57,34 @@ final class AnnotationTextEditor: NSScrollView {
         }
     }
 
+    var isBold: Bool = false {
+        didSet {
+            guard isBold != oldValue else { return }
+            applyAttributes()
+        }
+    }
+
+    var isItalic: Bool = false {
+        didSet {
+            guard isItalic != oldValue else { return }
+            applyAttributes()
+        }
+    }
+
+    var isUnderline: Bool = false {
+        didSet {
+            guard isUnderline != oldValue else { return }
+            applyAttributes()
+        }
+    }
+
     var text: String { textView.string }
     var viewBoxFrame: CGRect { frame }
 
     private let textView: InlineTextView
     private let textInset: CGFloat = 4
     private var manuallySizedWidth = false
+    private var manuallySizedHeight = false
     private var hasBegunEditing = false
 
     override var isFlipped: Bool { true }
@@ -132,6 +154,8 @@ final class AnnotationTextEditor: NSScrollView {
 
     func beginEditing(initialText: String) {
         hasBegunEditing = true
+        manuallySizedWidth = false
+        manuallySizedHeight = false
         textView.string = initialText
         if boxSize == .zero {
             boxSize = defaultBoxSize()
@@ -152,30 +176,41 @@ final class AnnotationTextEditor: NSScrollView {
 
     func resizeBox(to rect: CGRect) {
         manuallySizedWidth = true
+        manuallySizedHeight = true
         imageOrigin = rect.origin
         boxSize = rect.size
         layoutTextView()
         invalidateCanvasTrace()
     }
 
+    private func makeFont(size: CGFloat) -> NSFont {
+        let baseFont = NSFont(name: fontName, size: size)
+            ?? NSFont.systemFont(ofSize: size, weight: .medium)
+        var traits = baseFont.fontDescriptor.symbolicTraits
+        if isBold { traits.insert(.bold) }
+        if isItalic { traits.insert(.italic) }
+        guard traits != baseFont.fontDescriptor.symbolicTraits else { return baseFont }
+        let descriptor = baseFont.fontDescriptor.withSymbolicTraits(traits)
+        return NSFont(descriptor: descriptor, size: size) ?? baseFont
+    }
+
     private var attributes: [NSAttributedString.Key: Any] {
         let effective = max(1, fontSize * zoomScale)
-        let font = NSFont(name: fontName, size: effective)
-            ?? NSFont.systemFont(ofSize: effective, weight: .medium)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: makeFont(size: effective),
             .foregroundColor: textColor,
         ]
+        if isUnderline {
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
         return attrs
     }
 
     func drawGlyphTraceBehindText() {
         guard let glyphStrokeColor, !text.isEmpty else { return }
         let effective = max(1, fontSize * zoomScale)
-        let font = NSFont(name: fontName, size: effective)
-            ?? NSFont.systemFont(ofSize: effective, weight: .medium)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
+            .font: makeFont(size: effective),
             .foregroundColor: NSColor.clear,
             .strokeColor: glyphStrokeColor,
             .strokeWidth: Self.liveGlyphTraceStrokeWidth,
@@ -224,7 +259,13 @@ final class AnnotationTextEditor: NSScrollView {
         }
 
         let measuredHeight = measuredTextHeight(storage: storage, width: targetWidth)
-        boxSize = CGSize(width: targetWidth, height: max(minSize.height, measuredHeight))
+        let targetHeight: CGFloat
+        if manuallySizedHeight {
+            targetHeight = max(minSize.height, boxSize.height)
+        } else {
+            targetHeight = max(minSize.height, measuredHeight)
+        }
+        boxSize = CGSize(width: targetWidth, height: targetHeight)
         layoutTextView()
     }
 

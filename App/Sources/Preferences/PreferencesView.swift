@@ -12,6 +12,7 @@ enum PreferencesTab: String, CaseIterable, Sendable {
     case export
     case ocr
     case shortcuts
+    case crashLog
 
     var title: LocalizedStringKey {
         switch self {
@@ -24,6 +25,7 @@ enum PreferencesTab: String, CaseIterable, Sendable {
         case .export: "Export"
         case .ocr: "Text & Translation"
         case .shortcuts: "Shortcuts"
+        case .crashLog: "Crash Log"
         }
     }
 
@@ -38,6 +40,7 @@ enum PreferencesTab: String, CaseIterable, Sendable {
         case .export: "folder"
         case .ocr: "text.viewfinder"
         case .shortcuts: "keyboard"
+        case .crashLog: "exclamationmark.triangle"
         }
     }
 }
@@ -121,32 +124,44 @@ struct PreferencesView: View {
     }
 
     private var scrollContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                switch selectedTab {
-                case .general:
-                    GeneralSettingsView(viewModel: viewModel, updateManager: updateManager)
-                case .permissions:
-                    PermissionSettingsView(viewModel: viewModel)
-                case .screenshots:
-                    ScreenshotSettingsView(viewModel: viewModel)
-                case .recording:
-                    RecordingSettingsView(viewModel: viewModel)
-                case .quickAccess:
-                    QuickAccessSettingsView(viewModel: viewModel)
-                case .cloudShare:
-                    CloudShareSettingsView(viewModel: viewModel)
-                case .export:
-                    ExportSettingsView(viewModel: viewModel)
-                case .ocr:
-                    TextAndTranslationSettingsView(viewModel: viewModel)
-                case .shortcuts:
-                    ShortcutSettingsView()
+        Group {
+            switch selectedTab {
+            case .crashLog:
+                CrashLogSettingsView()
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            default:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        switch selectedTab {
+                        case .general:
+                            GeneralSettingsView(viewModel: viewModel, updateManager: updateManager)
+                        case .permissions:
+                            PermissionSettingsView(viewModel: viewModel)
+                        case .screenshots:
+                            ScreenshotSettingsView(viewModel: viewModel)
+                        case .recording:
+                            RecordingSettingsView(viewModel: viewModel)
+                        case .quickAccess:
+                            QuickAccessSettingsView(viewModel: viewModel)
+                        case .cloudShare:
+                            CloudShareSettingsView(viewModel: viewModel)
+                        case .export:
+                            ExportSettingsView(viewModel: viewModel)
+                        case .ocr:
+                            TextAndTranslationSettingsView(viewModel: viewModel)
+                        case .shortcuts:
+                            ShortcutSettingsView()
+                        case .crashLog:
+                            EmptyView()
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

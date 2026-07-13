@@ -12,6 +12,9 @@ struct AnnotationToolbar: View {
     @Binding var textFillEnabled: Bool
     @Binding var textOutlineEnabled: Bool
     @Binding var textStrokeEnabled: Bool
+    @Binding var textBoldEnabled: Bool
+    @Binding var textItalicEnabled: Bool
+    @Binding var textUnderlineEnabled: Bool
     @Binding var redactionMode: RedactionMode
     @Binding var showBeautifyPanel: Bool
     /// True when an inline text edit is active (either via the text tool or
@@ -29,6 +32,7 @@ struct AnnotationToolbar: View {
     let onRedo: () -> Void
     let onSave: () -> Void
     let onCopy: () -> Void
+    let onShare: () -> Void
     let onPin: () -> Void
     let onCancel: () -> Void
     let onCrop: () -> Void
@@ -205,6 +209,9 @@ struct AnnotationToolbar: View {
                 textEffectToggle("Fill", isOn: $textFillEnabled, help: "Text Fill")
                 textEffectToggle("Outline", isOn: $textOutlineEnabled, help: "Text Box Outline")
                 textEffectToggle("Trace", isOn: $textStrokeEnabled, help: "Text Trace")
+                textEffectToggle("Bold", isOn: $textBoldEnabled, help: "Bold")
+                textEffectToggle("Italic", isOn: $textItalicEnabled, help: "Italic")
+                textEffectToggle("Underline", isOn: $textUnderlineEnabled, help: "Underline")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -280,10 +287,13 @@ struct AnnotationToolbar: View {
 
             copyActionButton
 
+            actionButton(icon: "square.and.arrow.up", help: "Share", action: onShare)
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+
             actionButton(icon: "pin", help: "Pin", action: onPin)
                 .keyboardShortcut("p", modifiers: .command)
 
-            actionButton(icon: "square.and.arrow.down", help: "Save", isPrimary: true, action: onSave)
+            actionButton(icon: "arrow.down.doc", help: "Save", isPrimary: true, action: onSave)
                 .keyboardShortcut("s", modifiers: .command)
         }
     }

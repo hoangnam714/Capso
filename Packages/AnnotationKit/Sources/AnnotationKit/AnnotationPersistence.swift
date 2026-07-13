@@ -271,6 +271,9 @@ public struct TextRecord: Codable, Sendable {
     public var fillColor: AnnotationColor?
     public var outlineColor: AnnotationColor?
     public var glyphStrokeColor: AnnotationColor?
+    public var isBold: Bool = false
+    public var isItalic: Bool = false
+    public var isUnderline: Bool = false
 
     public init(_ object: TextObject) {
         self.style = object.style
@@ -282,6 +285,9 @@ public struct TextRecord: Codable, Sendable {
         self.fillColor = object.fillColor
         self.outlineColor = object.outlineColor
         self.glyphStrokeColor = object.glyphStrokeColor
+        self.isBold = object.isBold
+        self.isItalic = object.isItalic
+        self.isUnderline = object.isUnderline
     }
 
     public func makeObject() -> TextObject {
@@ -294,6 +300,9 @@ public struct TextRecord: Codable, Sendable {
             fillColor: fillColor,
             outlineColor: outlineColor,
             glyphStrokeColor: glyphStrokeColor,
+            isBold: isBold,
+            isItalic: isItalic,
+            isUnderline: isUnderline,
             style: style
         )
     }

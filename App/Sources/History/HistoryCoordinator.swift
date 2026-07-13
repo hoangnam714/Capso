@@ -23,6 +23,8 @@ final class HistoryCoordinator {
     var shareCoordinator: ShareCoordinator?
     /// Used to open the annotation editor from history items or clipboard.
     weak var captureCoordinator: CaptureCoordinator?
+    /// Entry IDs discarded from Quick Access before their async save finished.
+    private var discardedEntryIDs: Set<UUID> = []
 
     private var historyWindow: HistoryWindow?
 
@@ -212,6 +214,18 @@ final class HistoryCoordinator {
                     fileSize: Int64(pngData.count)
                 )
 
+                let shouldDiscard = await MainActor.run {
+                    if self.discardedEntryIDs.contains(entryID) {
+                        self.discardedEntryIDs.remove(entryID)
+                        return true
+                    }
+                    return false
+                }
+                if shouldDiscard {
+                    try? fm.removeItem(at: entryDir)
+                    return
+                }
+
                 try store.insert(entry)
 
                 await MainActor.run {
@@ -286,15 +300,21 @@ final class HistoryCoordinator {
     // MARK: - Actions
 
     func deleteEntry(_ entry: HistoryEntry) {
+        discardCapture(id: entry.id)
+    }
+
+    /// Deletes a history capture by ID, including in-flight async saves.
+    func discardCapture(id: UUID) {
+        discardedEntryIDs.insert(id)
         guard let store else { return }
         do {
-            try store.delete(id: entry.id)
-            let entryDir = store.entriesDirectory.appendingPathComponent(entry.id.uuidString, isDirectory: true)
-            try? FileManager.default.removeItem(at: entryDir)
-            loadEntries()
+            try store.delete(id: id)
         } catch {
-            print("Failed to delete history entry: \(error)")
+            print("Failed to delete history entry \(id): \(error)")
         }
+        let entryDir = store.entriesDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        try? FileManager.default.removeItem(at: entryDir)
+        loadEntries()
     }
 
     func clearAll() {
@@ -401,6 +421,12 @@ final class HistoryCoordinator {
                 }
             }
         }
+    }
+
+    /// Opens the system share sheet for this history entry (Messages, Mail, AirDrop, …).
+    func shareToApps(_ entry: HistoryEntry) {
+        guard let sourceURL = fullImageURL(for: entry) else { return }
+        SystemSharePresenter.present(fileURL: sourceURL, from: historyWindow?.nsWindow)
     }
 
     func showInFinder(_ entry: HistoryEntry) {

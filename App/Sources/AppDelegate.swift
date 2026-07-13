@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.shared = self
         DiagnosticLogger.installUncaughtExceptionHandler()
+        CaptureDiagnostics.noteLaunch()
+        DiagnosticLogger.prepareLogFile()
 
         // Show tooltips faster (default is ~2s, reduce to 0.3s)
         UserDefaults.standard.set(300, forKey: "NSInitialToolTipDelay")
@@ -52,12 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         historyCoordinator!.captureCoordinator = captureCoordinator
         recordingCoordinator!.historyCoordinator = historyCoordinator
         preferencesWindow = PreferencesWindow(settings: settings, permissionManager: permissionManager, updateManager: updateManager)
-        if settings.diagnosticLoggingEnabled {
-            DiagnosticLogger.append(
-                "App launched version=\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown") build=\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown")",
-                category: "App"
-            )
-        }
+        DiagnosticLogger.append(
+            "App launched version=\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown") build=\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown") diagnostics=\(settings.diagnosticLoggingEnabled)",
+            category: "App"
+        )
         menuBarController = MenuBarController(
             settings: settings,
             captureCoordinator: captureCoordinator!,
@@ -229,6 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        CaptureDiagnostics.noteCleanExit()
     }
 
     /// Called when the user double-clicks the app while it's already running

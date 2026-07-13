@@ -82,7 +82,7 @@ struct EditorPlaybackControls: View {
                 }
             } else {
                 Button(action: { exportToFile() }) {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Label("Save", systemImage: "arrow.down.doc")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)

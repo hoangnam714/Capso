@@ -70,7 +70,10 @@ struct TextObjectTests {
             boxSize: CGSize(width: 120, height: 40),
             fillColor: .black,
             outlineColor: .white,
-            glyphStrokeColor: .white
+            glyphStrokeColor: .white,
+            isBold: true,
+            isItalic: true,
+            isUnderline: true
         )
 
         let copy = text.copy() as? TextObject
@@ -81,6 +84,9 @@ struct TextObjectTests {
         #expect(copy?.fillColor == .black)
         #expect(copy?.outlineColor == .white)
         #expect(copy?.glyphStrokeColor == .white)
+        #expect(copy?.isBold == true)
+        #expect(copy?.isItalic == true)
+        #expect(copy?.isUnderline == true)
     }
 
     @Test("Text trace expands bounds enough for large glyph stroke")

@@ -67,11 +67,29 @@ final class AnnotationCanvasNSView: NSView {
             needsDisplay = true
         }
     }
+    var currentTextBold: Bool = false {
+        didSet {
+            textEditor?.isBold = currentTextBold
+            needsDisplay = true
+        }
+    }
+    var currentTextItalic: Bool = false {
+        didSet {
+            textEditor?.isItalic = currentTextItalic
+            needsDisplay = true
+        }
+    }
+    var currentTextUnderline: Bool = false {
+        didSet {
+            textEditor?.isUnderline = currentTextUnderline
+            needsDisplay = true
+        }
+    }
     var onDocumentChanged: (() -> Void)?
     var onObjectCreated: (() -> Void)?
-    /// Fired when an inline text edit begins. Passes the effective fontSize
-    /// and text effect states, so SwiftUI can sync toolbar state.
-    var onTextEditingStarted: ((CGFloat, Bool, Bool, Bool) -> Void)?
+    /// Fired when an inline text edit begins. Passes the effective fontSize,
+    /// text effect states, and whole-string style traits so SwiftUI can sync toolbar state.
+    var onTextEditingStarted: ((CGFloat, Bool, Bool, Bool, Bool, Bool, Bool) -> Void)?
     /// Fired on commit / cancel.
     var onTextEditingEnded: (() -> Void)?
     var onInteractionChanged: ((Bool) -> Void)?
@@ -158,7 +176,13 @@ final class AnnotationCanvasNSView: NSView {
     // MARK: - Handle Hit Testing
 
     private func supportsIndependentEdgeResize(for object: any AnnotationObject) -> Bool {
-        object is RectangleObject || object is EllipseObject
+        if object is RectangleObject || object is EllipseObject {
+            return true
+        }
+        if let text = object as? TextObject {
+            return text.boxSize != nil
+        }
+        return false
     }
 
     private func handleHitTest(point: CGPoint, object: any AnnotationObject) -> ResizeHandle? {
@@ -591,11 +615,16 @@ final class AnnotationCanvasNSView: NSView {
     }
 
     private func liveTextHandleCenters(boxFrame: CGRect) -> [(ResizeHandle, CGPoint)] {
-        [
-            (.topLeft, CGPoint(x: boxFrame.minX, y: boxFrame.minY)),
-            (.topRight, CGPoint(x: boxFrame.maxX, y: boxFrame.minY)),
-            (.bottomLeft, CGPoint(x: boxFrame.minX, y: boxFrame.maxY)),
-            (.bottomRight, CGPoint(x: boxFrame.maxX, y: boxFrame.maxY)),
+        let frame = boxFrame
+        return [
+            (.topLeft, CGPoint(x: frame.minX, y: frame.minY)),
+            (.topRight, CGPoint(x: frame.maxX, y: frame.minY)),
+            (.bottomLeft, CGPoint(x: frame.minX, y: frame.maxY)),
+            (.bottomRight, CGPoint(x: frame.maxX, y: frame.maxY)),
+            (.top, CGPoint(x: frame.midX, y: frame.minY)),
+            (.bottom, CGPoint(x: frame.midX, y: frame.maxY)),
+            (.left, CGPoint(x: frame.minX, y: frame.midY)),
+            (.right, CGPoint(x: frame.maxX, y: frame.midY)),
         ]
     }
 
@@ -800,16 +829,27 @@ final class AnnotationCanvasNSView: NSView {
 
         if isResizingTextEditor,
            let editor = textEditor,
-           let handle = textEditorResizeHandle?.textResizeHandle,
+           let handle = textEditorResizeHandle,
            let start = textEditorResizeStart,
            let originalBounds = textEditorOriginalBounds {
             let delta = CGSize(width: point.x - start.x, height: point.y - start.y)
-            let rect = TextResizeGeometry.rect(
-                originalBounds: originalBounds,
-                handle: handle,
-                dragDelta: delta,
-                minSize: CGSize(width: 60, height: max(28, editor.fontSize + 12))
-            )
+            let minSize = CGSize(width: 60, height: max(28, editor.fontSize + 12))
+            let rect: CGRect
+            if let textHandle = handle.textResizeHandle {
+                rect = TextResizeGeometry.rect(
+                    originalBounds: originalBounds,
+                    handle: textHandle,
+                    dragDelta: delta,
+                    minSize: minSize
+                )
+            } else {
+                rect = resizedRect(
+                    originalBounds: originalBounds,
+                    handle: handle,
+                    dragDelta: delta,
+                    minSize: minSize
+                )
+            }
             editor.resizeBox(to: rect)
             needsDisplay = true
             return
@@ -835,6 +875,50 @@ final class AnnotationCanvasNSView: NSView {
         }
 
         needsDisplay = true
+    }
+
+    private func resizedRect(
+        originalBounds: CGRect,
+        handle: ResizeHandle,
+        dragDelta: CGSize,
+        minSize: CGSize
+    ) -> CGRect {
+        let dx = dragDelta.width
+        let dy = dragDelta.height
+        var newRect = originalBounds
+        switch handle {
+        case .topLeft:
+            newRect.origin.x = originalBounds.minX + dx
+            newRect.origin.y = originalBounds.minY + dy
+            newRect.size.width = originalBounds.width - dx
+            newRect.size.height = originalBounds.height - dy
+        case .topRight:
+            newRect.origin.y = originalBounds.minY + dy
+            newRect.size.width = originalBounds.width + dx
+            newRect.size.height = originalBounds.height - dy
+        case .bottomLeft:
+            newRect.origin.x = originalBounds.minX + dx
+            newRect.size.width = originalBounds.width - dx
+            newRect.size.height = originalBounds.height + dy
+        case .bottomRight:
+            newRect.size.width = originalBounds.width + dx
+            newRect.size.height = originalBounds.height + dy
+        case .top:
+            newRect.origin.y = originalBounds.minY + dy
+            newRect.size.height = originalBounds.height - dy
+        case .bottom:
+            newRect.size.height = originalBounds.height + dy
+        case .left:
+            newRect.origin.x = originalBounds.minX + dx
+            newRect.size.width = originalBounds.width - dx
+        case .right:
+            newRect.size.width = originalBounds.width + dx
+        case .pathStart, .pathEnd, .pathControl:
+            return originalBounds
+        }
+        if newRect.width < minSize.width { newRect.size.width = minSize.width }
+        if newRect.height < minSize.height { newRect.size.height = minSize.height }
+        return newRect
     }
 
     private func resizeObject(id: ObjectID, handle: ResizeHandle,
@@ -903,15 +987,26 @@ final class AnnotationCanvasNSView: NSView {
         else if let ellipse = obj as? EllipseObject { ellipse.rect = newRect }
         else if let pixelate = obj as? PixelateObject { pixelate.rect = newRect }
         else if let text = obj as? TextObject {
-            if text.boxSize != nil, let textHandle = handle.textResizeHandle {
-                let rect = TextResizeGeometry.rect(
-                    originalBounds: originalBounds,
-                    handle: textHandle,
-                    dragDelta: CGSize(width: dx, height: dy),
-                    minSize: CGSize(width: 60, height: max(28, text.fontSize + 12))
-                )
-                text.origin = rect.origin
-                text.boxSize = rect.size
+            if text.boxSize != nil {
+                if let textHandle = handle.textResizeHandle {
+                    let rect = TextResizeGeometry.rect(
+                        originalBounds: originalBounds,
+                        handle: textHandle,
+                        dragDelta: CGSize(width: dx, height: dy),
+                        minSize: CGSize(width: 60, height: max(28, text.fontSize + 12))
+                    )
+                    text.origin = rect.origin
+                    text.boxSize = rect.size
+                } else {
+                    let rect = resizedRect(
+                        originalBounds: originalBounds,
+                        handle: handle,
+                        dragDelta: CGSize(width: dx, height: dy),
+                        minSize: CGSize(width: 60, height: max(28, text.fontSize + 12))
+                    )
+                    text.origin = rect.origin
+                    text.boxSize = rect.size
+                }
                 return
             }
 
@@ -1169,6 +1264,9 @@ final class AnnotationCanvasNSView: NSView {
             editor.fillColor = existing.fillColor?.nsColor.withAlphaComponent(0.5)
             editor.boxOutlineColor = existing.outlineColor?.nsColor
             editor.glyphStrokeColor = existing.glyphStrokeColor?.nsColor
+            editor.isBold = existing.isBold
+            editor.isItalic = existing.isItalic
+            editor.isUnderline = existing.isUnderline
             editor.beginEditing(initialText: existing.text)
             editingOriginalObject = existing
         } else {
@@ -1178,6 +1276,9 @@ final class AnnotationCanvasNSView: NSView {
             editor.fillColor = currentTextFillColor?.nsColor.withAlphaComponent(0.5)
             editor.boxOutlineColor = currentTextOutlineColor?.nsColor
             editor.glyphStrokeColor = currentTextGlyphStrokeColor?.nsColor
+            editor.isBold = currentTextBold
+            editor.isItalic = currentTextItalic
+            editor.isUnderline = currentTextUnderline
             editor.beginEditing(initialText: "")
             editingOriginalObject = nil
         }
@@ -1192,7 +1293,10 @@ final class AnnotationCanvasNSView: NSView {
             editor.fontSize,
             editor.fillColor != nil,
             editor.boxOutlineColor != nil,
-            editor.glyphStrokeColor != nil
+            editor.glyphStrokeColor != nil,
+            editor.isBold,
+            editor.isItalic,
+            editor.isUnderline
         )
     }
 
@@ -1229,7 +1333,10 @@ final class AnnotationCanvasNSView: NSView {
                 || boxSize != existing.boxSize
                 || editorFillColor != existing.fillColor
                 || editorOutlineColor != existing.outlineColor
-                || editorGlyphStrokeColor != existing.glyphStrokeColor {
+                || editorGlyphStrokeColor != existing.glyphStrokeColor
+                || editor.isBold != existing.isBold
+                || editor.isItalic != existing.isItalic
+                || editor.isUnderline != existing.isUnderline {
                 // Mutated text or fontSize — push one undo step, then update.
                 doc.beginDrag()
                 existing.text = finalText
@@ -1238,6 +1345,9 @@ final class AnnotationCanvasNSView: NSView {
                 existing.fillColor = editorFillColor
                 existing.outlineColor = editorOutlineColor
                 existing.glyphStrokeColor = editorGlyphStrokeColor
+                existing.isBold = editor.isBold
+                existing.isItalic = editor.isItalic
+                existing.isUnderline = editor.isUnderline
             }
         } else if !finalText.isEmpty {
             // Fresh edit with content → create a new TextObject using the
@@ -1250,6 +1360,9 @@ final class AnnotationCanvasNSView: NSView {
                 fillColor: editorFillColor,
                 outlineColor: editorOutlineColor,
                 glyphStrokeColor: editorGlyphStrokeColor,
+                isBold: editor.isBold,
+                isItalic: editor.isItalic,
+                isUnderline: editor.isUnderline,
                 style: currentStyle
             )
             doc.addObject(newObj)

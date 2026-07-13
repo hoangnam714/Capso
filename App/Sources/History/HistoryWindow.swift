@@ -7,6 +7,9 @@ final class HistoryWindow {
     private var window: NSWindow?
     private let coordinator: HistoryCoordinator
 
+    /// Underlying AppKit window used for anchoring share sheets, etc.
+    var nsWindow: NSWindow? { window }
+
     init(coordinator: HistoryCoordinator) {
         self.coordinator = coordinator
     }

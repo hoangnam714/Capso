@@ -717,7 +717,7 @@ private struct CaptureAllInOneToolbarView: View {
                 dimensionPill
                 presetMenu
                 iconButton("doc.on.doc", kind: .copy, help: "Copy selected area", action: onCopy)
-                iconButton("square.and.arrow.down", kind: .save, help: "Save selected area", action: onSave)
+                iconButton("arrow.down.doc", kind: .save, help: "Save selected area", action: onSave)
                 iconButton("pin", kind: .pin, help: "Pin selected area", action: onPin)
                 iconButton("xmark", kind: .cancel, help: "Cancel", action: onCancel)
             }
@@ -760,7 +760,7 @@ private struct CaptureAllInOneToolbarView: View {
             }
 
             railIconButton("doc.on.doc", kind: .copy, help: "Copy selected area", label: String(localized: "Copy"), action: onCopy)
-            railIconButton("square.and.arrow.down", kind: .save, help: "Save selected area", label: String(localized: "Save"), action: onSave)
+            railIconButton("arrow.down.doc", kind: .save, help: "Save selected area", label: String(localized: "Save"), action: onSave)
             railIconButton("pin", kind: .pin, help: "Pin selected area", label: String(localized: "Pin"), action: onPin)
             railIconButton("xmark", kind: .cancel, help: "Cancel", label: String(localized: "Close"), action: onCancel)
 

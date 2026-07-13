@@ -35,6 +35,8 @@ final class CaptureCoordinator {
     private var scrollCaptureController: ScrollCaptureController?
     private var scrollCaptureOverlay: ScrollCaptureOverlay?
     private var selfTimerHUD: SelfTimerHUD?
+    /// Invalidates in-flight capture Tasks / delayed overlays when a newer capture starts.
+    private var captureSessionID = UUID()
 
     var lastCaptureResult: CaptureResult?
     var ocrCoordinator: OCRCoordinator?
@@ -191,24 +193,29 @@ final class CaptureCoordinator {
 
     func captureAllInOne() {
         pendingAction = .default
+        let session = beginCaptureSession("allInOne")
         rememberSourceApplication()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.showFrozenAllInOneOverlay()
+            guard let self, self.isCurrentSession(session) else { return }
+            self.showFrozenAllInOneOverlay()
         }
     }
 
     private func startAreaCapture() {
+        let session = beginCaptureSession("area")
         rememberSourceApplication()
         // Always freeze the screen first, then show the selection overlay on top
         // of the frozen backdrop. Freezing captures the current frame (including
         // any open dropdowns/popovers/menus) BEFORE the overlay takes key-window
         // status and dismisses that transient UI. See showFrozenOverlay().
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.showFrozenOverlay()
+            guard let self, self.isCurrentSession(session) else { return }
+            self.showFrozenOverlay()
         }
     }
 
     func captureFullscreen() {
+        let session = beginCaptureSession("fullscreen")
         rememberSourceApplication()
         // Capture the display the user is currently looking at (the one
         // containing the mouse cursor), not unconditionally the primary.
@@ -237,6 +244,7 @@ final class CaptureCoordinator {
                 captureRect: CGDisplayBounds(displayID),
                 displayID: displayID
             )
+            guard isCurrentSession(session) else { return }
             handleCaptureResult(result)
             return
         }
@@ -247,21 +255,25 @@ final class CaptureCoordinator {
                     displayID: displayID,
                     showsCursor: settings.screenshotShowsCursor
                 )
+                guard self.isCurrentSession(session) else { return }
                 handleCaptureResult(result)
             } catch {
-                print("Fullscreen capture failed: \(error)")
+                guard self.isCurrentSession(session) else { return }
+                logCaptureFailure("Fullscreen capture failed", error: error)
             }
         }
     }
 
     func captureScrolling() {
+        let session = beginCaptureSession("scrolling")
         rememberSourceApplication()
         // Freeze first (preserves open dropdowns), then select area on the
         // frozen backdrop. After selection, dismiss the freeze layer and run
         // the live scrolling capture on the real desktop.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.showFrozenOverlay { rect, screen in
-                self?.startScrollingCapture(rect: rect, screen: screen)
+            guard let self, self.isCurrentSession(session) else { return }
+            self.showFrozenOverlay { rect, screen in
+                self.startScrollingCapture(rect: rect, screen: screen)
             }
         }
     }
@@ -270,20 +282,23 @@ final class CaptureCoordinator {
     /// Uses `settings.selfTimerDurationSeconds` as the delay.
     func captureAreaWithSelfTimer() {
         pendingAction = .default
+        let session = beginCaptureSession("selfTimer")
         rememberSourceApplication()
         let seconds = settings.selfTimerDurationSeconds
         // Freeze first (preserves open dropdowns), then select area on the
         // frozen backdrop. After selection, dismiss the freeze layer and run
         // the self-timer countdown + live capture.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.showFrozenOverlay { rect, screen in
-                self?.runSelfTimerThenCapture(rect: rect, screen: screen, seconds: seconds)
+            guard let self, self.isCurrentSession(session) else { return }
+            self.showFrozenOverlay { rect, screen in
+                self.runSelfTimerThenCapture(rect: rect, screen: screen, seconds: seconds)
             }
         }
     }
 
     func captureWindow() {
         pendingSourceApplication = nil
+        let session = beginCaptureSession("window")
         // Enumerate windows first (async, no focus change), then freeze the
         // screen and show the window-selection overlay on the frozen backdrop.
         // Freezing happens AFTER enumeration but BEFORE the overlay takes key
@@ -297,14 +312,17 @@ final class CaptureCoordinator {
                 let windows = try await ContentEnumerator.windows()
                     .filter { !overlayIDs.contains($0.id) }
 
+                guard self.isCurrentSession(session) else { return }
+
                 guard !windows.isEmpty else {
-                    print("No windows found to capture")
+                    logCaptureFailure("No windows found to capture")
                     return
                 }
 
                 showFrozenOverlay(mode: .windowSelection(windows))
             } catch {
-                print("Window enumeration failed: \(error)")
+                guard self.isCurrentSession(session) else { return }
+                logCaptureFailure("Window enumeration failed", error: error)
             }
         }
     }
@@ -721,6 +739,7 @@ final class CaptureCoordinator {
     }
 
     private func performWindowCapture(windowID: CGWindowID) {
+        let session = captureSessionID
         Task {
             do {
                 // Always capture without system shadow — we generate our own
@@ -730,6 +749,7 @@ final class CaptureCoordinator {
                     includeShadow: false,
                     showsCursor: settings.screenshotShowsCursor
                 )
+                guard self.isCurrentSession(session) else { return }
                 if settings.captureWindowShadow {
                     // Capture the real desktop behind the window (excluding the
                     // window itself) for the frosted glass background.
@@ -741,6 +761,7 @@ final class CaptureCoordinator {
                         windowID: windowID,
                         padding: totalPadding
                     )
+                    guard self.isCurrentSession(session) else { return }
                     if let composited = Self.compositeWindowWithFrostedGlass(
                         windowImage: result.image,
                         desktopBackground: desktopBg
@@ -761,7 +782,8 @@ final class CaptureCoordinator {
                 }
                 handleCaptureResult(result)
             } catch {
-                print("Window capture failed: \(error)")
+                guard self.isCurrentSession(session) else { return }
+                logCaptureFailure("Window capture failed", error: error)
             }
         }
     }
@@ -977,36 +999,44 @@ final class CaptureCoordinator {
             },
             onComplete: { [weak self] image in
                 Task { @MainActor in
-                    self?.scrollCaptureOverlay?.close()
-                    self?.scrollCaptureOverlay = nil
-                    self?.scrollCaptureController = nil
+                    guard let self else { return }
+                    // Ignore stale completions after cancel / newer capture session.
+                    guard self.scrollCaptureController === controller else { return }
 
-                    if let image {
-                        let result = CaptureResult(
-                            image: image,
-                            mode: .scrolling,
-                            captureRect: captureRect,
-                            displayID: displayID
-                        )
-                        self?.handleCaptureResult(result)
+                    self.scrollCaptureOverlay?.close()
+                    self.scrollCaptureOverlay = nil
+                    self.scrollCaptureController = nil
+
+                    guard let image else {
+                        CaptureDiagnostics.breadcrumb("scroll.cancelledOrEmpty")
+                        return
                     }
+
+                    let result = CaptureResult(
+                        image: image,
+                        mode: .scrolling,
+                        captureRect: captureRect,
+                        displayID: displayID
+                    )
+                    self.handleCaptureResult(result)
                 }
             }
         )
     }
 
     private func finishScrollingCapture() {
-        scrollCaptureController?.stop()
+        scrollCaptureController?.complete()
     }
 
     private func cancelScrollingCapture() {
-        scrollCaptureController?.stop()
+        scrollCaptureController?.cancel()
         scrollCaptureOverlay?.close()
         scrollCaptureOverlay = nil
         scrollCaptureController = nil
     }
 
     private func performAreaCapture(rect: CGRect, screen: NSScreen) {
+        let session = captureSessionID
         Task {
             do {
                 let screenFrame = screen.frame
@@ -1024,9 +1054,11 @@ final class CaptureCoordinator {
                     displayID: displayID,
                     showsCursor: settings.screenshotShowsCursor
                 )
+                guard self.isCurrentSession(session) else { return }
                 handleCaptureResult(result)
             } catch {
-                print("Area capture failed: \(error)")
+                guard self.isCurrentSession(session) else { return }
+                logCaptureFailure("Area capture failed", error: error)
             }
         }
     }
@@ -1216,14 +1248,24 @@ final class CaptureCoordinator {
             }
             return  // history already saved above; skip the call below
         case .default:
+            // Snapshot before auto-copy so Delete can restore the prior clipboard.
+            let clipboardBackup = settings.screenshotShowPreview
+                ? ClipboardSnapshot.capture()
+                : nil
             if settings.screenshotAutoCopy {
                 copyImageToClipboard(outputResult.image)
             }
+            var autoSavedURL: URL?
             if settings.screenshotAutoSave {
-                saveImageToFile(outputResult)
+                autoSavedURL = saveImageToFileReturningURL(outputResult)
             }
             if settings.screenshotShowPreview {
-                showQuickAccess(for: outputResult, entryID: entryID)
+                showQuickAccess(
+                    for: outputResult,
+                    entryID: entryID,
+                    clipboardBackup: clipboardBackup,
+                    autoSavedURL: autoSavedURL
+                )
             }
         }
 
@@ -1246,7 +1288,12 @@ final class CaptureCoordinator {
         return NSSound(named: "Pop")
     }()
 
-    private func showQuickAccess(for result: CaptureResult, entryID: UUID) {
+    private func showQuickAccess(
+        for result: CaptureResult,
+        entryID: UUID,
+        clipboardBackup: ClipboardSnapshot?,
+        autoSavedURL: URL?
+    ) {
         // If the stack is full, evict the oldest (the one anchored at the
         // bottom slot) with a slide-off-left animation. The remaining
         // previews will slide down one slot as part of the restack below.
@@ -1275,6 +1322,21 @@ final class CaptureCoordinator {
             self.saveImageToFile(result)
             self.dismissQuickAccessWindow(window)
         }
+        window.onShare = { [weak self, weak window] in
+            guard let self, let window else { return }
+            window.cancelAutoDismiss()
+            SystemSharePresenter.present(image: result.image, from: window)
+        }
+        window.onDelete = { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.discardQuickAccessCapture(
+                entryID: entryID,
+                clipboardBackup: clipboardBackup,
+                autoSavedURL: autoSavedURL
+            )
+            self.quickAccessPreviewWindow?.close()
+            self.dismissQuickAccessWindow(window)
+        }
         window.onAnnotate = { [weak self, weak window] in
             guard let self, let window else { return }
             let anchor = window.targetScreen
@@ -1283,7 +1345,14 @@ final class CaptureCoordinator {
         }
         window.onPreview = { [weak self, weak window] in
             guard let self, let window else { return }
-            self.openQuickAccessPreview(result, anchorScreen: window.targetScreen)
+            self.openQuickAccessPreview(
+                result,
+                entryID: entryID,
+                anchorScreen: window.targetScreen,
+                clipboardBackup: clipboardBackup,
+                autoSavedURL: autoSavedURL,
+                sourceQuickAccess: window
+            )
         }
         window.onPin = { [weak self, weak window] in
             guard let self, let window else { return }
@@ -1313,9 +1382,51 @@ final class CaptureCoordinator {
         window.show()
     }
 
-    private func openQuickAccessPreview(_ result: CaptureResult, anchorScreen: NSScreen?) {
+    private func discardQuickAccessCapture(
+        entryID: UUID,
+        clipboardBackup: ClipboardSnapshot?,
+        autoSavedURL: URL?
+    ) {
+        historyCoordinator?.discardCapture(id: entryID)
+        if let autoSavedURL {
+            try? FileManager.default.removeItem(at: autoSavedURL)
+        }
+        if let clipboardBackup {
+            clipboardBackup.restore()
+        }
+    }
+
+    private func openQuickAccessPreview(
+        _ result: CaptureResult,
+        entryID: UUID,
+        anchorScreen: NSScreen?,
+        clipboardBackup: ClipboardSnapshot?,
+        autoSavedURL: URL?,
+        sourceQuickAccess: QuickAccessWindow?
+    ) {
         quickAccessPreviewWindow?.close()
         let previewWindow = QuickAccessPreviewWindow(image: result.image, anchorScreen: anchorScreen)
+        previewWindow.onCopy = { [weak self] in
+            self?.copyImageToClipboard(result.image)
+        }
+        previewWindow.onSave = { [weak self] in
+            self?.saveImageToFile(result)
+        }
+        previewWindow.onShare = { [weak previewWindow] in
+            SystemSharePresenter.present(image: result.image, from: previewWindow)
+        }
+        previewWindow.onDelete = { [weak self, weak previewWindow, weak sourceQuickAccess] in
+            guard let self else { return }
+            self.discardQuickAccessCapture(
+                entryID: entryID,
+                clipboardBackup: clipboardBackup,
+                autoSavedURL: autoSavedURL
+            )
+            previewWindow?.close()
+            if let sourceQuickAccess {
+                self.dismissQuickAccessWindow(sourceQuickAccess)
+            }
+        }
         previewWindow.onClose = { [weak self, weak previewWindow] in
             guard let self, self.quickAccessPreviewWindow === previewWindow else { return }
             self.quickAccessPreviewWindow = nil
@@ -1420,6 +1531,9 @@ final class CaptureCoordinator {
                 self.activeAnnotationHistoryEntryID = nil
                 self.annotationWindow = nil
             },
+            onShare: { [weak self] (rendered: CGImage) in
+                SystemSharePresenter.present(image: rendered, from: self?.annotationWindow)
+            },
             onPin: { [weak self] (rendered: CGImage, anchor: CGRect?) in
                 self?.pinRenderedImage(
                     rendered,
@@ -1517,6 +1631,9 @@ final class CaptureCoordinator {
             onCopy: { [weak self] rendered in
                 self?.copyRenderedImage(rendered)
                 self?.inlineAnnotationWindow = nil
+            },
+            onShare: { [weak self] rendered in
+                SystemSharePresenter.present(image: rendered, from: self?.inlineAnnotationWindow)
             },
             onPin: { [weak self] rendered, anchor in
                 self?.pinRenderedImage(
@@ -1632,7 +1749,12 @@ final class CaptureCoordinator {
     }
 
     private func saveImageToFile(_ result: CaptureResult) {
-        saveImageToFile(
+        _ = saveImageToFileReturningURL(result)
+    }
+
+    @discardableResult
+    private func saveImageToFileReturningURL(_ result: CaptureResult) -> URL? {
+        saveImageToFileReturningURL(
             result.image,
             sourceAppName: result.appName,
             sourceWindowTitle: result.windowName,
@@ -1646,7 +1768,22 @@ final class CaptureCoordinator {
         sourceWindowTitle: String? = nil,
         date: Date = Date()
     ) {
-        guard let encoded = screenshotData(from: image) else { return }
+        _ = saveImageToFileReturningURL(
+            image,
+            sourceAppName: sourceAppName,
+            sourceWindowTitle: sourceWindowTitle,
+            date: date
+        )
+    }
+
+    @discardableResult
+    private func saveImageToFileReturningURL(
+        _ image: CGImage,
+        sourceAppName: String? = nil,
+        sourceWindowTitle: String? = nil,
+        date: Date = Date()
+    ) -> URL? {
+        guard let encoded = screenshotData(from: image) else { return nil }
         let directory = settings.screenshotMonthlyFolders
             ? FileNaming.monthlyDirectory(in: settings.exportLocation)
             : settings.exportLocation
@@ -1660,7 +1797,12 @@ final class CaptureCoordinator {
             template: settings.screenshotFilenameTemplate
         )
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? encoded.data.write(to: url)
+        do {
+            try encoded.data.write(to: url)
+            return url
+        } catch {
+            return nil
+        }
     }
 
     private func screenshotData(from image: CGImage) -> (data: Data, format: FileFormat)? {
@@ -1756,8 +1898,42 @@ final class CaptureCoordinator {
     }
 
     private func logDiagnostic(_ message: String) {
+        CaptureDiagnostics.breadcrumb(message)
         guard settings.diagnosticLoggingEnabled else { return }
         DiagnosticLogger.append(message, category: "Capture")
+    }
+
+    /// Always records capture failures (even when verbose diagnostics are off).
+    private func logCaptureFailure(_ context: String, error: Error? = nil) {
+        let detail = error.map { "\($0.localizedDescription)" } ?? ""
+        let message = detail.isEmpty ? context : "\(context): \(detail)"
+        CaptureDiagnostics.breadcrumb(message)
+        DiagnosticLogger.append(message, category: "Capture")
+    }
+
+    @discardableResult
+    private func beginCaptureSession(_ phase: String) -> UUID {
+        let id = UUID()
+        captureSessionID = id
+        CaptureDiagnostics.breadcrumb(
+            "session.begin \(phase) id=\(id.uuidString.prefix(8)) displays=\(NSScreen.screens.count)"
+        )
+        cancelInFlightCaptureUI()
+        return id
+    }
+
+    private func isCurrentSession(_ id: UUID) -> Bool {
+        id == captureSessionID
+    }
+
+    /// Tear down selection/scroll/timer chrome so a new capture can't overlap.
+    private func cancelInFlightCaptureUI() {
+        cancelScrollingCapture()
+        selfTimerHUD?.dismiss()
+        selfTimerHUD = nil
+        allInOneToolbarWindow?.close()
+        allInOneToolbarWindow = nil
+        dismissOverlay()
     }
 
     private static func humanizeShareError(_ err: ShareError) -> String {

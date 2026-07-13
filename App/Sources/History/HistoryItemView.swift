@@ -89,7 +89,11 @@ struct HistoryItemView: View {
                             .help(String(localized: "Annotate"))
                         }
                         actionButton("doc.on.doc") { coordinator.copyToClipboard(entry) }
-                        actionButton("square.and.arrow.down") { coordinator.saveToFile(entry) }
+                            .help(String(localized: "Copy"))
+                        actionButton("square.and.arrow.up") { coordinator.shareToApps(entry) }
+                            .help(String(localized: "Share"))
+                        actionButton("arrow.down.doc") { coordinator.saveToFile(entry) }
+                            .help(String(localized: "Save"))
                         cloudActionButton
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -302,6 +306,7 @@ struct HistoryItemView: View {
             Button(String(localized: "Annotate")) { coordinator.openInAnnotation(entry) }
         }
         Button("Copy to Clipboard") { coordinator.copyToClipboard(entry) }
+        Button(String(localized: "Share…")) { coordinator.shareToApps(entry) }
         Button("Save to...") { coordinator.saveToFile(entry) }
 
         if let cloudURL = entry.cloudURL {

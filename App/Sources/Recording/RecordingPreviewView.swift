@@ -71,7 +71,7 @@ struct RecordingPreviewView: View {
                 } else {
                     VStack(spacing: 6) {
                         quickActionButton("Copy", systemImage: "doc.on.doc", action: onCopy)
-                        quickActionButton("Save", systemImage: "square.and.arrow.down", action: onSave)
+                        quickActionButton("Save", systemImage: "arrow.down.doc", action: onSave)
                     }
                 }
             }

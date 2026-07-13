@@ -15,6 +15,9 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
     public var fillColor: AnnotationColor?
     public var outlineColor: AnnotationColor?
     public var glyphStrokeColor: AnnotationColor?
+    public var isBold: Bool
+    public var isItalic: Bool
+    public var isUnderline: Bool
 
     public init(
         text: String,
@@ -25,6 +28,9 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
         fillColor: AnnotationColor? = nil,
         outlineColor: AnnotationColor? = nil,
         glyphStrokeColor: AnnotationColor? = nil,
+        isBold: Bool = false,
+        isItalic: Bool = false,
+        isUnderline: Bool = false,
         style: StrokeStyle = StrokeStyle()
     ) {
         self.text = text
@@ -35,15 +41,32 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
         self.fillColor = fillColor
         self.outlineColor = outlineColor
         self.glyphStrokeColor = glyphStrokeColor
+        self.isBold = isBold
+        self.isItalic = isItalic
+        self.isUnderline = isUnderline
         self.style = style
     }
 
+    private func makeFont() -> NSFont {
+        let baseFont = NSFont(name: fontName, size: fontSize)
+            ?? NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        var traits = baseFont.fontDescriptor.symbolicTraits
+        if isBold { traits.insert(.bold) }
+        if isItalic { traits.insert(.italic) }
+        guard traits != baseFont.fontDescriptor.symbolicTraits else { return baseFont }
+        let descriptor = baseFont.fontDescriptor.withSymbolicTraits(traits)
+        return NSFont(descriptor: descriptor, size: fontSize) ?? baseFont
+    }
+
     private var fillAttributes: [NSAttributedString.Key: Any] {
-        let font = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize, weight: .medium)
-        return [
-            .font: font,
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: makeFont(),
             .foregroundColor: style.color.nsColor.withAlphaComponent(style.opacity),
         ]
+        if isUnderline {
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        return attrs
     }
 
     private var traceAttributes: [NSAttributedString.Key: Any]? {
@@ -136,6 +159,9 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
             fillColor: fillColor,
             outlineColor: outlineColor,
             glyphStrokeColor: glyphStrokeColor,
+            isBold: isBold,
+            isItalic: isItalic,
+            isUnderline: isUnderline,
             style: style
         )
     }

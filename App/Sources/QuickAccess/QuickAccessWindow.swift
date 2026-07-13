@@ -13,6 +13,8 @@ final class QuickAccessWindow: NSPanel {
 
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
+    var onShare: (() -> Void)?
+    var onDelete: (() -> Void)?
     var onAnnotate: (() -> Void)?
     var onOCR: (() -> Void)?
     var onTranslate: (() -> Void)?
@@ -76,6 +78,8 @@ final class QuickAccessWindow: NSPanel {
             onUploadSucceeded: { [weak self] url in self?.onUploadSucceeded?(url) },
             onCopy:      { [weak self] in self?.onCopy?() },
             onSave:      { [weak self] in self?.onSave?() },
+            onShare:     { [weak self] in self?.onShare?() },
+            onDelete:    { [weak self] in self?.onDelete?() },
             onAnnotate:  { [weak self] in self?.onAnnotate?() },
             onOCR:       { [weak self] in self?.onOCR?() },
             onTranslate: { [weak self] in self?.onTranslate?() },
@@ -129,6 +133,12 @@ final class QuickAccessWindow: NSPanel {
         }
     }
 
+    /// Cancel the auto-dismiss timer (e.g. while presenting the share sheet).
+    func cancelAutoDismiss() {
+        autoDismissTimer?.invalidate()
+        autoDismissTimer = nil
+    }
+
     override func close() {
         autoDismissTimer?.invalidate()
         autoDismissTimer = nil
@@ -152,7 +162,8 @@ final class QuickAccessWindow: NSPanel {
             self.animator().setFrame(target, display: true)
             self.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            self?.orderOut(nil)
+            // Must fully close (not just orderOut) so hosting views / CGImages release.
+            self?.close()
         })
     }
 

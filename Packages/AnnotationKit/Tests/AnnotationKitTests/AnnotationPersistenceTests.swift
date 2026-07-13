@@ -32,7 +32,10 @@ struct AnnotationPersistenceTests {
             origin: CGPoint(x: 12, y: 34),
             fontSize: 18,
             fontName: "Helvetica",
-            fillColor: .yellow
+            fillColor: .yellow,
+            isBold: true,
+            isItalic: true,
+            isUnderline: true
         ))
         doc.addObject(FreehandObject(
             points: [CGPoint(x: 1, y: 2), CGPoint(x: 3, y: 4), CGPoint(x: 5, y: 6)],
@@ -74,6 +77,9 @@ struct AnnotationPersistenceTests {
         let text = try #require(restored.objects[4] as? TextObject)
         #expect(text.text == "Hello")
         #expect(text.fontSize == 18)
+        #expect(text.isBold == true)
+        #expect(text.isItalic == true)
+        #expect(text.isUnderline == true)
 
         let pixelate = try #require(restored.objects[6] as? PixelateObject)
         #expect(pixelate.mode == .blur)

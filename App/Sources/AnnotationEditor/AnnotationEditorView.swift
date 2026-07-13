@@ -12,6 +12,7 @@ struct AnnotationEditorView: View {
     /// so History can persist both the preview PNG and a re-editable annotation sidecar.
     let onSave: (CGImage, CGImage, AnnotationDocument) -> Void
     let onCopy: (CGImage, CGImage, AnnotationDocument) -> Void
+    let onShare: (CGImage) -> Void
     let onPin: (CGImage) -> Void
     let onCancel: () -> Void
 
@@ -26,6 +27,7 @@ struct AnnotationEditorView: View {
         interactionState: AnnotationEditorInteractionState,
         onSave: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
         onCopy: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
+        onShare: @escaping (CGImage) -> Void,
         onPin: @escaping (CGImage) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -34,6 +36,7 @@ struct AnnotationEditorView: View {
         self.interactionState = interactionState
         self.onSave = onSave
         self.onCopy = onCopy
+        self.onShare = onShare
         self.onPin = onPin
         self.onCancel = onCancel
         self._sourceImage = State(initialValue: sourceImage)
@@ -56,6 +59,9 @@ struct AnnotationEditorView: View {
     @AppStorage("annotationTextFillEnabled") private var textFillEnabled: Bool = false
     @AppStorage("annotationTextOutlineEnabled") private var textOutlineEnabled: Bool = false
     @AppStorage("annotationTextStrokeEnabled") private var textStrokeEnabled: Bool = true
+    @AppStorage("annotationTextBoldEnabled") private var textBoldEnabled: Bool = false
+    @AppStorage("annotationTextItalicEnabled") private var textItalicEnabled: Bool = false
+    @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
     /// Preserved font size for the Text tool. Swapped in/out of `lineWidth`
     /// as the user toggles tools — same pattern as savedBlockSize etc.
     @AppStorage("annotationTextFontSize") private var savedTextFontSize: Double = 48
@@ -264,6 +270,9 @@ struct AnnotationEditorView: View {
             textFillEnabled: $textFillEnabled,
             textOutlineEnabled: $textOutlineEnabled,
             textStrokeEnabled: $textStrokeEnabled,
+            textBoldEnabled: $textBoldEnabled,
+            textItalicEnabled: $textItalicEnabled,
+            textUnderlineEnabled: $textUnderlineEnabled,
             redactionMode: $redactionMode,
             showBeautifyPanel: $showBeautifyPanel,
             isEditingText: isEditingText,
@@ -274,6 +283,7 @@ struct AnnotationEditorView: View {
             onRedo: { document.redo(); refreshTrigger += 1 },
             onSave: { save() },
             onCopy: { copy() },
+            onShare: { share() },
             onPin: { pin() },
             onCancel: onCancel,
             onCrop: { isCropMode = true }
@@ -295,6 +305,9 @@ struct AnnotationEditorView: View {
             .onChange(of: textFillEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textOutlineEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textStrokeEnabled) { _, _ in updateSelectedStyle() }
+            .onChange(of: textBoldEnabled) { _, _ in updateSelectedStyle() }
+            .onChange(of: textItalicEnabled) { _, _ in updateSelectedStyle() }
+            .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
             .onChange(of: document.selectedObjectID, handleSelectionChange)
             .onChange(of: geo.size, handleCanvasSizeChange)
@@ -327,6 +340,9 @@ struct AnnotationEditorView: View {
             textFillColor: textFillColor,
             textOutlineColor: textOutlineColor,
             textGlyphStrokeColor: textGlyphStrokeColor,
+            textBold: textBoldEnabled,
+            textItalic: textItalicEnabled,
+            textUnderline: textUnderlineEnabled,
             zoomScale: zoomScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -442,6 +458,12 @@ struct AnnotationEditorView: View {
                 lineWidth = text.fontSize
             }
             currentColor = text.style.color
+            textFillEnabled = text.fillColor != nil
+            textOutlineEnabled = text.outlineColor != nil
+            textStrokeEnabled = text.glyphStrokeColor != nil
+            textBoldEnabled = text.isBold
+            textItalicEnabled = text.isItalic
+            textUnderlineEnabled = text.isUnderline
             return
         }
         if let counter = object as? CounterObject {
@@ -488,13 +510,19 @@ struct AnnotationEditorView: View {
         fontSize: CGFloat,
         hasFill: Bool,
         hasOutline: Bool,
-        hasStroke: Bool
+        hasStroke: Bool,
+        isBold: Bool,
+        isItalic: Bool,
+        isUnderline: Bool
     ) {
         isEditingText = true
         interactionState.isEditingText = true
         textFillEnabled = hasFill
         textOutlineEnabled = hasOutline
         textStrokeEnabled = hasStroke
+        textBoldEnabled = isBold
+        textItalicEnabled = isItalic
+        textUnderlineEnabled = isUnderline
         if lineWidth != fontSize {
             lineWidth = fontSize
         }
@@ -552,6 +580,9 @@ struct AnnotationEditorView: View {
                 text.fillColor = textFillColor
                 text.outlineColor = textOutlineColor
                 text.glyphStrokeColor = textGlyphStrokeColor
+                text.isBold = textBoldEnabled
+                text.isItalic = textItalicEnabled
+                text.isUnderline = textUnderlineEnabled
                 text.style = currentStyle
             } else {
                 obj.style = currentStyle
@@ -606,6 +637,15 @@ struct AnnotationEditorView: View {
         DispatchQueue.main.async {
             if let rendered = renderedOutputImage() {
                 onPin(rendered)
+            }
+        }
+    }
+
+    private func share() {
+        commitEditingTrigger += 1
+        DispatchQueue.main.async {
+            if let rendered = renderedOutputImage() {
+                onShare(rendered)
             }
         }
     }

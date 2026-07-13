@@ -14,6 +14,7 @@ final class AnnotationEditorWindow: NSPanel {
         anchorScreen: NSScreen? = nil,
         onSave: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
         onCopy: @escaping (CGImage, CGImage, AnnotationDocument) -> Void,
+        onShare: @escaping (CGImage) -> Void,
         onPin: @escaping (CGImage, CGRect?) -> Void,
         onClose: @escaping () -> Void
     ) {
@@ -81,6 +82,10 @@ final class AnnotationEditorWindow: NSPanel {
             onCopy: { [weak self] rendered, source, document in
                 onCopy(rendered, source, document)
                 self?.close()
+            },
+            onShare: { rendered in
+                // Keep the editor open while the share sheet is presented.
+                onShare(rendered)
             },
             onPin: { [weak self] rendered in
                 onPin(rendered, self?.frame)
