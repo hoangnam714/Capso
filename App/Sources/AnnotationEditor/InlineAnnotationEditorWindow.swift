@@ -156,6 +156,7 @@ private struct InlineAnnotationEditorView: View {
     @AppStorage("annotationTextBoldEnabled") private var textBoldEnabled: Bool = false
     @AppStorage("annotationTextItalicEnabled") private var textItalicEnabled: Bool = false
     @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
+    @AppStorage("annotationTextAlignment") private var textAlignment: AnnotationTextAlignment = .left
 
     @State private var lineWidth: CGFloat = 3
     @State private var strokePattern: StrokePattern = .solid
@@ -253,6 +254,7 @@ private struct InlineAnnotationEditorView: View {
         .onChange(of: textBoldEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textItalicEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
+        .onChange(of: textAlignment) { _, _ in updateSelectedStyle() }
         .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
     }
 
@@ -275,6 +277,7 @@ private struct InlineAnnotationEditorView: View {
             textBold: textBoldEnabled,
             textItalic: textItalicEnabled,
             textUnderline: textUnderlineEnabled,
+            textAlignment: textAlignment,
             zoomScale: displayScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -309,6 +312,7 @@ private struct InlineAnnotationEditorView: View {
             textBoldEnabled: $textBoldEnabled,
             textItalicEnabled: $textItalicEnabled,
             textUnderlineEnabled: $textUnderlineEnabled,
+            textAlignment: $textAlignment,
             redactionMode: $redactionMode,
             isEditingText: isEditingText,
             canUndo: document.canUndo,
@@ -319,10 +323,30 @@ private struct InlineAnnotationEditorView: View {
             onCopy: copy,
             onShare: share,
             onPin: pin,
-            onSave: save
+            onSave: save,
+            onInsertImageFromClipboard: insertImageFromClipboard,
+            onInsertImageFromFile: insertImageFromFile
         )
         .frame(width: toolbarRect.width, height: toolbarRect.height)
         .position(x: toolbarRect.midX, y: toolbarRect.midY)
+    }
+
+    private func insertImageFromClipboard() {
+        guard let image = AnnotationImageInsertion.imageFromClipboard(),
+              AnnotationImageInsertion.insertIntoDocument(document, image: image) else {
+            return
+        }
+        currentTool = .select
+        refreshTrigger += 1
+    }
+
+    private func insertImageFromFile() {
+        guard let image = AnnotationImageInsertion.imageFromOpenPanel(),
+              AnnotationImageInsertion.insertIntoDocument(document, image: image) else {
+            return
+        }
+        currentTool = .select
+        refreshTrigger += 1
     }
 
     private func handleAppear() {
@@ -371,7 +395,8 @@ private struct InlineAnnotationEditorView: View {
         hasStroke: Bool,
         isBold: Bool,
         isItalic: Bool,
-        isUnderline: Bool
+        isUnderline: Bool,
+        alignment: AnnotationTextAlignment
     ) {
         isEditingText = true
         interactionState.isEditingText = true
@@ -381,6 +406,7 @@ private struct InlineAnnotationEditorView: View {
         textBoldEnabled = isBold
         textItalicEnabled = isItalic
         textUnderlineEnabled = isUnderline
+        textAlignment = alignment
         if lineWidth != fontSize {
             lineWidth = fontSize
         }
@@ -443,6 +469,7 @@ private struct InlineAnnotationEditorView: View {
                 text.isBold = textBoldEnabled
                 text.isItalic = textItalicEnabled
                 text.isUnderline = textUnderlineEnabled
+                text.alignment = textAlignment
                 text.style = currentStyle
             } else {
                 obj.style = currentStyle
@@ -515,6 +542,7 @@ private struct InlineAnnotationToolbar: View {
     @Binding var textBoldEnabled: Bool
     @Binding var textItalicEnabled: Bool
     @Binding var textUnderlineEnabled: Bool
+    @Binding var textAlignment: AnnotationTextAlignment
     @Binding var redactionMode: RedactionMode
 
     let isEditingText: Bool
@@ -527,6 +555,8 @@ private struct InlineAnnotationToolbar: View {
     let onShare: () -> Void
     let onPin: () -> Void
     let onSave: () -> Void
+    var onInsertImageFromClipboard: (() -> Void)? = nil
+    var onInsertImageFromFile: (() -> Void)? = nil
 
     private var isFontSizeMode: Bool {
         currentTool == .text || isEditingText
@@ -546,6 +576,16 @@ private struct InlineAnnotationToolbar: View {
                     toolButton(.pixelate)
                     toolButton(.counter)
                     toolButton(.highlighter)
+                    insertImageButton(
+                        systemName: "doc.on.clipboard",
+                        help: "Paste Image from Clipboard",
+                        action: { onInsertImageFromClipboard?() }
+                    )
+                    insertImageButton(
+                        systemName: "photo.badge.plus",
+                        help: "Insert Image from File…",
+                        action: { onInsertImageFromFile?() }
+                    )
                 }
 
                 divider
@@ -688,6 +728,17 @@ private struct InlineAnnotationToolbar: View {
                 textEffectToggle("Bold", isOn: $textBoldEnabled, help: "Bold")
                 textEffectToggle("Italic", isOn: $textItalicEnabled, help: "Italic")
                 textEffectToggle("Underline", isOn: $textUnderlineEnabled, help: "Underline")
+
+                Picker("", selection: $textAlignment) {
+                    Image(systemName: "text.alignleft").tag(AnnotationTextAlignment.left)
+                    Image(systemName: "text.aligncenter").tag(AnnotationTextAlignment.center)
+                    Image(systemName: "text.alignright").tag(AnnotationTextAlignment.right)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 96)
+                .help("Text Alignment")
+                .controlSize(.small)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -762,6 +813,23 @@ private struct InlineAnnotationToolbar: View {
         .help(helpText(for: tool))
     }
 
+    private func insertImageButton(
+        systemName: String,
+        help: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 29, height: 28)
+                .background(Color.white.opacity(0.001))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
     private func iconButton(
         systemName: String,
         help: LocalizedStringKey,
@@ -811,8 +879,8 @@ private struct InlineAnnotationToolbar: View {
         case .select: return "Select"
         case .arrow: return "Arrow"
         case .line: return "Line"
-        case .rectangle: return "Rectangle"
-        case .ellipse: return "Ellipse"
+        case .rectangle: return "Rectangle (⌃: square)"
+        case .ellipse: return "Ellipse (⌃: circle)"
         case .text: return "Text"
         case .freehand: return "Draw"
         case .pixelate: return "Pixelate / Blur"

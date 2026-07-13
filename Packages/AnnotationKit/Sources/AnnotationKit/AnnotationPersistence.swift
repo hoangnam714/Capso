@@ -93,6 +93,7 @@ public enum AnnotationRecord: Codable, Sendable {
     case freehand(FreehandRecord)
     case pixelate(PixelateRecord)
     case counter(CounterRecord)
+    case image(ImageRecord)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -116,6 +117,8 @@ public enum AnnotationRecord: Codable, Sendable {
             self = .pixelate(PixelateRecord(pixelate))
         case let counter as CounterObject:
             self = .counter(CounterRecord(counter))
+        case let image as ImageObject:
+            self = .image(ImageRecord(image))
         default:
             return nil
         }
@@ -141,6 +144,8 @@ public enum AnnotationRecord: Codable, Sendable {
             self = .pixelate(try PixelateRecord(from: decoder))
         case "counter":
             self = .counter(try CounterRecord(from: decoder))
+        case "image":
+            self = .image(try ImageRecord(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
@@ -168,6 +173,8 @@ public enum AnnotationRecord: Codable, Sendable {
             try record.encode(to: encoder)
         case .counter(let record):
             try record.encode(to: encoder)
+        case .image(let record):
+            try record.encode(to: encoder)
         }
     }
 
@@ -181,6 +188,7 @@ public enum AnnotationRecord: Codable, Sendable {
         case .freehand(let record): return record.makeObject()
         case .pixelate(let record): return record.makeObject()
         case .counter(let record): return record.makeObject()
+        case .image(let record): return record.makeObject()
         }
     }
 }
@@ -274,6 +282,7 @@ public struct TextRecord: Codable, Sendable {
     public var isBold: Bool = false
     public var isItalic: Bool = false
     public var isUnderline: Bool = false
+    public var alignment: AnnotationTextAlignment = .left
 
     public init(_ object: TextObject) {
         self.style = object.style
@@ -288,6 +297,7 @@ public struct TextRecord: Codable, Sendable {
         self.isBold = object.isBold
         self.isItalic = object.isItalic
         self.isUnderline = object.isUnderline
+        self.alignment = object.alignment
     }
 
     public func makeObject() -> TextObject {
@@ -303,6 +313,7 @@ public struct TextRecord: Codable, Sendable {
             isBold: isBold,
             isItalic: isItalic,
             isUnderline: isUnderline,
+            alignment: alignment,
             style: style
         )
     }
@@ -365,5 +376,22 @@ public struct CounterRecord: Codable, Sendable {
             radius: radius,
             style: style
         )
+    }
+}
+
+public struct ImageRecord: Codable, Sendable {
+    public var type: String = "image"
+    public var style: StrokeStyle
+    public var rect: CodableRect
+    public var imageData: Data
+
+    public init(_ object: ImageObject) {
+        self.style = object.style
+        self.rect = CodableRect(object.rect)
+        self.imageData = object.imageData
+    }
+
+    public func makeObject() -> ImageObject {
+        ImageObject(imageData: imageData, rect: rect.cgRect, style: style)
     }
 }

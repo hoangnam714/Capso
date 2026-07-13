@@ -110,9 +110,11 @@ final class CaptureAllInOneAnnotationOverlay {
         case "c":
             return session.document.copySelected()
         case "v":
-            guard session.document.pasteClipboard() else { return false }
-            session.markChanged()
-            return true
+            if session.document.pasteClipboard() {
+                session.markChanged()
+                return true
+            }
+            return session.insertImageFromClipboard()
         case "d":
             guard session.document.duplicateSelected() else { return false }
             session.markChanged()
@@ -384,6 +386,7 @@ final class AllInOneAnnotationSession: ObservableObject {
     @Published var textBoldEnabled: Bool
     @Published var textItalicEnabled: Bool
     @Published var textUnderlineEnabled: Bool
+    @Published var textAlignment: AnnotationTextAlignment
     @Published var lineWidth: CGFloat
     @Published var strokePattern: StrokePattern
     @Published var redactionMode: RedactionMode
@@ -416,6 +419,7 @@ final class AllInOneAnnotationSession: ObservableObject {
         self.textBoldEnabled = UserDefaults.standard.bool(forKey: "annotationTextBoldEnabled")
         self.textItalicEnabled = UserDefaults.standard.bool(forKey: "annotationTextItalicEnabled")
         self.textUnderlineEnabled = UserDefaults.standard.bool(forKey: "annotationTextUnderlineEnabled")
+        self.textAlignment = Self.storedTextAlignment()
         self.lineWidth = Self.storedWidth(for: Self.storedTool())
         self.strokePattern = Self.storedStrokePattern()
         self.redactionMode = Self.storedRedactionMode()
@@ -512,6 +516,7 @@ final class AllInOneAnnotationSession: ObservableObject {
                 text.isBold = textBoldEnabled
                 text.isItalic = textItalicEnabled
                 text.isUnderline = textUnderlineEnabled
+                text.alignment = textAlignment
                 text.style = currentStyle
             } else {
                 obj.style = currentStyle
@@ -533,6 +538,28 @@ final class AllInOneAnnotationSession: ObservableObject {
 
     func markChanged() {
         refreshTrigger += 1
+    }
+
+    @discardableResult
+    func insertImageFromClipboard() -> Bool {
+        guard let image = AnnotationImageInsertion.imageFromClipboard(),
+              AnnotationImageInsertion.insertIntoDocument(document, image: image) else {
+            return false
+        }
+        switchTool(.select)
+        markChanged()
+        return true
+    }
+
+    @discardableResult
+    func insertImageFromFile() -> Bool {
+        guard let image = AnnotationImageInsertion.imageFromOpenPanel(),
+              AnnotationImageInsertion.insertIntoDocument(document, image: image) else {
+            return false
+        }
+        switchTool(.select)
+        markChanged()
+        return true
     }
 
     func persistWidth(_ width: CGFloat, for tool: AnnotationTool) {
@@ -583,6 +610,14 @@ final class AllInOneAnnotationSession: ObservableObject {
         UserDefaults.standard.object(forKey: "annotationTextStrokeEnabled") as? Bool ?? true
     }
 
+    private static func storedTextAlignment() -> AnnotationTextAlignment {
+        if let raw = UserDefaults.standard.string(forKey: "annotationTextAlignment"),
+           let alignment = AnnotationTextAlignment(rawValue: raw) {
+            return alignment
+        }
+        return .left
+    }
+
     private static func storedTextFontSize() -> CGFloat {
         CGFloat(UserDefaults.standard.object(forKey: "annotationTextFontSize") as? Double ?? 48)
     }
@@ -620,6 +655,7 @@ private struct AllInOneAnnotationCanvasView: View {
             textBold: session.textBoldEnabled,
             textItalic: session.textItalicEnabled,
             textUnderline: session.textUnderlineEnabled,
+            textAlignment: session.textAlignment,
             zoomScale: session.displayScale,
             refreshTrigger: session.refreshTrigger,
             textRegions: session.textRegions,
@@ -629,7 +665,7 @@ private struct AllInOneAnnotationCanvasView: View {
                 session.document.clearSelection()
                 session.switchTool(.select)
             },
-            onTextEditingStarted: { fontSize, hasFill, hasOutline, hasStroke, isBold, isItalic, isUnderline in
+            onTextEditingStarted: { fontSize, hasFill, hasOutline, hasStroke, isBold, isItalic, isUnderline, alignment in
                 session.isEditingText = true
                 session.textFillEnabled = hasFill
                 session.textOutlineEnabled = hasOutline
@@ -637,6 +673,7 @@ private struct AllInOneAnnotationCanvasView: View {
                 session.textBoldEnabled = isBold
                 session.textItalicEnabled = isItalic
                 session.textUnderlineEnabled = isUnderline
+                session.textAlignment = alignment
                 if session.lineWidth != fontSize {
                     session.lineWidth = fontSize
                 }
@@ -652,7 +689,7 @@ private struct AllInOneAnnotationCanvasView: View {
 
 private struct AllInOneAnnotationToolbarView: View {
     private enum TextEffectAction: Hashable {
-        case fill, outline, trace, bold, italic, underline
+        case fill, outline, trace, bold, italic, underline, alignLeft, alignCenter, alignRight
     }
 
     @ObservedObject var session: AllInOneAnnotationSession
@@ -675,6 +712,7 @@ private struct AllInOneAnnotationToolbarView: View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
                 toolRow(primaryTools)
+                insertImageControls
 
                 divider
 
@@ -768,6 +806,16 @@ private struct AllInOneAnnotationToolbarView: View {
                     .foregroundStyle(.white.opacity(0.86))
                     .frame(minWidth: 34)
 
+                iconButton(
+                    systemName: "doc.on.clipboard",
+                    help: "Paste Image from Clipboard",
+                    action: { _ = session.insertImageFromClipboard() }
+                )
+                iconButton(
+                    systemName: "photo.badge.plus",
+                    help: "Insert Image from File…",
+                    action: { _ = session.insertImageFromFile() }
+                )
                 iconButton(
                     systemName: "ellipsis",
                     help: "More tools",
@@ -936,6 +984,27 @@ private struct AllInOneAnnotationToolbarView: View {
                 session.textUnderlineEnabled.toggle()
                 return session.textUnderlineEnabled
             }
+            textAlignmentGlyphButton(
+                .alignLeft,
+                systemName: "text.alignleft",
+                label: String(localized: "Left"),
+                help: "Align Left",
+                alignment: .left
+            )
+            textAlignmentGlyphButton(
+                .alignCenter,
+                systemName: "text.aligncenter",
+                label: String(localized: "Center"),
+                help: "Align Center",
+                alignment: .center
+            )
+            textAlignmentGlyphButton(
+                .alignRight,
+                systemName: "text.alignright",
+                label: String(localized: "Right"),
+                help: "Align Right",
+                alignment: .right
+            )
         }
     }
 
@@ -990,6 +1059,24 @@ private struct AllInOneAnnotationToolbarView: View {
                     session.textUnderlineEnabled.toggle()
                     return session.textUnderlineEnabled
                 }
+
+                Picker("", selection: Binding(
+                    get: { session.textAlignment },
+                    set: {
+                        session.textAlignment = $0
+                        UserDefaults.standard.set($0.rawValue, forKey: "annotationTextAlignment")
+                        session.updateSelectedStyle()
+                    }
+                )) {
+                    Image(systemName: "text.alignleft").tag(AnnotationTextAlignment.left)
+                    Image(systemName: "text.aligncenter").tag(AnnotationTextAlignment.center)
+                    Image(systemName: "text.alignright").tag(AnnotationTextAlignment.right)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 96)
+                .help("Text Alignment")
+                .controlSize(.small)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1069,6 +1156,41 @@ private struct AllInOneAnnotationToolbarView: View {
         .help(help)
     }
 
+    private func textAlignmentGlyphButton(
+        _ kind: TextEffectAction,
+        systemName: String,
+        label: String,
+        help: LocalizedStringKey,
+        alignment: AnnotationTextAlignment
+    ) -> some View {
+        Button {
+            session.textAlignment = alignment
+            UserDefaults.standard.set(alignment.rawValue, forKey: "annotationTextAlignment")
+            session.updateSelectedStyle()
+        } label: {
+            VStack(spacing: hoveredTextEffect == kind ? 1 : 0) {
+                Image(systemName: systemName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(height: hoveredTextEffect == kind ? 17 : 38)
+
+                if hoveredTextEffect == kind {
+                    Text(label)
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                        .transition(.opacity)
+                }
+            }
+            .foregroundStyle(.white)
+            .frame(width: 32, height: 38)
+            .background(buttonBackground(isActive: session.textAlignment == alignment, isEnabled: true))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveredTextEffect = $0 ? kind : nil }
+        .help(help)
+    }
+
     private func textEffectButton(
         title: LocalizedStringKey,
         isActive: Bool,
@@ -1120,6 +1242,21 @@ private struct AllInOneAnnotationToolbarView: View {
             ForEach(tools, id: \.self) { tool in
                 toolButton(tool)
             }
+        }
+    }
+
+    private var insertImageControls: some View {
+        HStack(spacing: 4) {
+            iconButton(
+                systemName: "doc.on.clipboard",
+                help: "Paste Image from Clipboard",
+                action: { _ = session.insertImageFromClipboard() }
+            )
+            iconButton(
+                systemName: "photo.badge.plus",
+                help: "Insert Image from File…",
+                action: { _ = session.insertImageFromFile() }
+            )
         }
     }
 
@@ -1318,8 +1455,8 @@ private struct AllInOneAnnotationToolbarView: View {
         case .select: return "Select"
         case .arrow: return "Arrow"
         case .line: return "Line"
-        case .rectangle: return "Rectangle"
-        case .ellipse: return "Ellipse"
+        case .rectangle: return "Rectangle (⌃: square)"
+        case .ellipse: return "Ellipse (⌃: circle)"
         case .text: return "Text"
         case .freehand: return "Draw"
         case .pixelate: return "Pixelate / Blur"

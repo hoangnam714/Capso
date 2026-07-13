@@ -73,7 +73,8 @@ struct TextObjectTests {
             glyphStrokeColor: .white,
             isBold: true,
             isItalic: true,
-            isUnderline: true
+            isUnderline: true,
+            alignment: .center
         )
 
         let copy = text.copy() as? TextObject
@@ -87,6 +88,7 @@ struct TextObjectTests {
         #expect(copy?.isBold == true)
         #expect(copy?.isItalic == true)
         #expect(copy?.isUnderline == true)
+        #expect(copy?.alignment == .center)
     }
 
     @Test("Text trace expands bounds enough for large glyph stroke")
@@ -362,4 +364,51 @@ struct EllipseObjectTests {
         let ellipse = EllipseObject(rect: CGRect(x: 10, y: 20, width: 100, height: 50))
         #expect(ellipse.bounds == CGRect(x: 10, y: 20, width: 100, height: 50))
     }
+}
+
+@Suite("ImageObject")
+struct ImageObjectTests {
+    @Test("Image copy preserves PNG bytes and rect")
+    func copyPreservesData() throws {
+        let cgImage = try #require(makeSolidImage(width: 32, height: 24))
+        let rect = CGRect(x: 10, y: 20, width: 80, height: 60)
+        let image = try #require(ImageObject(cgImage: cgImage, rect: rect))
+        let copy = try #require(image.copy() as? ImageObject)
+
+        #expect(copy.rect == rect)
+        #expect(copy.imageData == image.imageData)
+        #expect(copy.cgImage?.width == 32)
+        #expect(copy.cgImage?.height == 24)
+    }
+
+    @Test("Fitting rect keeps aspect and stays within canvas fraction")
+    func fittingRectKeepsAspect() {
+        let rect = ImageObject.fittingRect(
+            forPixelSize: CGSize(width: 400, height: 200),
+            canvasSize: CGSize(width: 1000, height: 800),
+            center: CGPoint(x: 500, y: 400),
+            maxFraction: 0.45
+        )
+        #expect(abs(rect.width / rect.height - 2) < 0.01)
+        #expect(rect.width <= 450)
+        #expect(rect.height <= 360)
+        #expect(abs(rect.midX - 500) < 0.5)
+        #expect(abs(rect.midY - 400) < 0.5)
+    }
+}
+
+private func makeSolidImage(width: Int, height: Int) -> CGImage? {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()
 }

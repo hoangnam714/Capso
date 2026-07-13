@@ -62,6 +62,7 @@ struct AnnotationEditorView: View {
     @AppStorage("annotationTextBoldEnabled") private var textBoldEnabled: Bool = false
     @AppStorage("annotationTextItalicEnabled") private var textItalicEnabled: Bool = false
     @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
+    @AppStorage("annotationTextAlignment") private var textAlignment: AnnotationTextAlignment = .left
     /// Preserved font size for the Text tool. Swapped in/out of `lineWidth`
     /// as the user toggles tools — same pattern as savedBlockSize etc.
     @AppStorage("annotationTextFontSize") private var savedTextFontSize: Double = 48
@@ -273,6 +274,7 @@ struct AnnotationEditorView: View {
             textBoldEnabled: $textBoldEnabled,
             textItalicEnabled: $textItalicEnabled,
             textUnderlineEnabled: $textUnderlineEnabled,
+            textAlignment: $textAlignment,
             redactionMode: $redactionMode,
             showBeautifyPanel: $showBeautifyPanel,
             isEditingText: isEditingText,
@@ -286,7 +288,9 @@ struct AnnotationEditorView: View {
             onShare: { share() },
             onPin: { pin() },
             onCancel: onCancel,
-            onCrop: { isCropMode = true }
+            onCrop: { isCropMode = true },
+            onInsertImageFromClipboard: insertImageFromClipboard,
+            onInsertImageFromFile: insertImageFromFile
         )
     }
 
@@ -308,6 +312,7 @@ struct AnnotationEditorView: View {
             .onChange(of: textBoldEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textItalicEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
+            .onChange(of: textAlignment) { _, _ in updateSelectedStyle() }
             .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
             .onChange(of: document.selectedObjectID, handleSelectionChange)
             .onChange(of: geo.size, handleCanvasSizeChange)
@@ -343,6 +348,7 @@ struct AnnotationEditorView: View {
             textBold: textBoldEnabled,
             textItalic: textItalicEnabled,
             textUnderline: textUnderlineEnabled,
+            textAlignment: textAlignment,
             zoomScale: zoomScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -464,6 +470,7 @@ struct AnnotationEditorView: View {
             textBoldEnabled = text.isBold
             textItalicEnabled = text.isItalic
             textUnderlineEnabled = text.isUnderline
+            textAlignment = text.alignment
             return
         }
         if let counter = object as? CounterObject {
@@ -513,7 +520,8 @@ struct AnnotationEditorView: View {
         hasStroke: Bool,
         isBold: Bool,
         isItalic: Bool,
-        isUnderline: Bool
+        isUnderline: Bool,
+        alignment: AnnotationTextAlignment
     ) {
         isEditingText = true
         interactionState.isEditingText = true
@@ -523,6 +531,7 @@ struct AnnotationEditorView: View {
         textBoldEnabled = isBold
         textItalicEnabled = isItalic
         textUnderlineEnabled = isUnderline
+        textAlignment = alignment
         if lineWidth != fontSize {
             lineWidth = fontSize
         }
@@ -583,12 +592,31 @@ struct AnnotationEditorView: View {
                 text.isBold = textBoldEnabled
                 text.isItalic = textItalicEnabled
                 text.isUnderline = textUnderlineEnabled
+                text.alignment = textAlignment
                 text.style = currentStyle
             } else {
                 obj.style = currentStyle
             }
             refreshTrigger += 1
         }
+    }
+
+    private func insertImageFromClipboard() {
+        guard let image = AnnotationImageInsertion.imageFromClipboard(),
+              AnnotationImageInsertion.insertIntoDocument(document, image: image) else {
+            return
+        }
+        currentTool = .select
+        refreshTrigger += 1
+    }
+
+    private func insertImageFromFile() {
+        guard let image = AnnotationImageInsertion.imageFromOpenPanel(),
+              AnnotationImageInsertion.insertIntoDocument(document, image: image) else {
+            return
+        }
+        currentTool = .select
+        refreshTrigger += 1
     }
 
     private func renderedOutputImage() -> CGImage? {

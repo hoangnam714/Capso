@@ -2,6 +2,7 @@
 import AppKit
 import CoreGraphics
 import AnnotationKit
+import SharedKit
 
 /// Which visible handle is being dragged for resize or path adjustment.
 private enum ResizeHandle {
@@ -85,11 +86,17 @@ final class AnnotationCanvasNSView: NSView {
             needsDisplay = true
         }
     }
+    var currentTextAlignment: AnnotationTextAlignment = .left {
+        didSet {
+            textEditor?.alignment = currentTextAlignment
+            needsDisplay = true
+        }
+    }
     var onDocumentChanged: (() -> Void)?
     var onObjectCreated: (() -> Void)?
     /// Fired when an inline text edit begins. Passes the effective fontSize,
-    /// text effect states, and whole-string style traits so SwiftUI can sync toolbar state.
-    var onTextEditingStarted: ((CGFloat, Bool, Bool, Bool, Bool, Bool, Bool) -> Void)?
+    /// text effect states, style traits, and alignment so SwiftUI can sync toolbar state.
+    var onTextEditingStarted: ((CGFloat, Bool, Bool, Bool, Bool, Bool, Bool, AnnotationTextAlignment) -> Void)?
     /// Fired on commit / cancel.
     var onTextEditingEnded: (() -> Void)?
     var onInteractionChanged: ((Bool) -> Void)?
@@ -176,7 +183,7 @@ final class AnnotationCanvasNSView: NSView {
     // MARK: - Handle Hit Testing
 
     private func supportsIndependentEdgeResize(for object: any AnnotationObject) -> Bool {
-        if object is RectangleObject || object is EllipseObject {
+        if object is RectangleObject || object is EllipseObject || object is ImageObject {
             return true
         }
         if let text = object as? TextObject {
@@ -448,6 +455,44 @@ final class AnnotationCanvasNSView: NSView {
         drawLiveTextEditorChrome()
     }
 
+    /// ⌃ while drawing rectangle/ellipse locks equal width & height (square / circle).
+    private var shouldConstrainShapeAspect: Bool {
+        NSEvent.modifierFlags.contains(.control)
+    }
+
+    /// Axis-aligned rect from drag. With Control held on rect/ellipse tools,
+    /// expands to a square/circle anchored at `start`, matching the drag quadrant.
+    private func drawingShapeRect(from start: CGPoint, to end: CGPoint) -> CGRect {
+        let freeform = CGRect(
+            x: min(start.x, end.x),
+            y: min(start.y, end.y),
+            width: abs(end.x - start.x),
+            height: abs(end.y - start.y)
+        )
+        guard shouldConstrainShapeAspect,
+              currentTool == .rectangle || currentTool == .ellipse else {
+            return freeform
+        }
+        return Self.equalSidesRect(from: start, to: end)
+    }
+
+    private static func equalSidesRect(from start: CGPoint, to end: CGPoint) -> CGRect {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let side = max(abs(dx), abs(dy))
+        guard side > 0 else {
+            return CGRect(origin: start, size: .zero)
+        }
+        let signedW = dx >= 0 ? side : -side
+        let signedH = dy >= 0 ? side : -side
+        return CGRect(
+            x: min(start.x, start.x + signedW),
+            y: min(start.y, start.y + signedH),
+            width: side,
+            height: side
+        )
+    }
+
     private func drawLiveTextEditorChrome() {
         guard let editor = textEditor else { return }
         let boxFrame = editor.viewBoxFrame
@@ -645,8 +690,7 @@ final class AnnotationCanvasNSView: NSView {
         ctx.setLineWidth(currentStyle.lineWidth)
         ctx.setAlpha(0.6)
 
-        let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-                          width: abs(end.x - start.x), height: abs(end.y - start.y))
+        let rect = drawingShapeRect(from: start, to: end)
 
         switch currentTool {
         case .arrow:
@@ -986,6 +1030,7 @@ final class AnnotationCanvasNSView: NSView {
         if let rect = obj as? RectangleObject { rect.rect = newRect }
         else if let ellipse = obj as? EllipseObject { ellipse.rect = newRect }
         else if let pixelate = obj as? PixelateObject { pixelate.rect = newRect }
+        else if let image = obj as? ImageObject { image.rect = newRect }
         else if let text = obj as? TextObject {
             if text.boxSize != nil {
                 if let textHandle = handle.textResizeHandle {
@@ -1128,14 +1173,12 @@ final class AnnotationCanvasNSView: NSView {
                     doc.addObject(LineObject(start: start, end: end, style: currentStyle))
                 }
             case .rectangle:
-                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                let rect = drawingShapeRect(from: start, to: end)
                 if rect.width > 3 / zoomScale && rect.height > 3 / zoomScale {
                     doc.addObject(RectangleObject(rect: rect, style: currentStyle))
                 }
             case .ellipse:
-                let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
-                                  width: abs(end.x - start.x), height: abs(end.y - start.y))
+                let rect = drawingShapeRect(from: start, to: end)
                 if rect.width > 3 / zoomScale && rect.height > 3 / zoomScale {
                     doc.addObject(EllipseObject(rect: rect, style: currentStyle))
                 }
@@ -1209,6 +1252,17 @@ final class AnnotationCanvasNSView: NSView {
         super.keyDown(with: event)
     }
 
+    override func flagsChanged(with event: NSEvent) {
+        // Live-update square/circle preview when Control is pressed or released mid-drag.
+        if isDragging,
+           activeResizeHandle == nil,
+           !isMovingObject,
+           currentTool == .rectangle || currentTool == .ellipse {
+            needsDisplay = true
+        }
+        super.flagsChanged(with: event)
+    }
+
     /// Handles ⌘C / ⌘V / ⌘D for annotation objects. Returns `true` when handled.
     @discardableResult
     func handleClipboardShortcut(_ event: NSEvent) -> Bool {
@@ -1225,10 +1279,19 @@ final class AnnotationCanvasNSView: NSView {
             guard document?.copySelected() == true else { return false }
             return true
         case "v":
-            guard document?.pasteClipboard() == true else { return false }
-            needsDisplay = true
-            onDocumentChanged?()
-            return true
+            if document?.pasteClipboard() == true {
+                needsDisplay = true
+                onDocumentChanged?()
+                return true
+            }
+            if let image = ImageUtilities.cgImageFromPasteboard(),
+               document?.insertImage(image) != nil {
+                needsDisplay = true
+                onDocumentChanged?()
+                onObjectCreated?()
+                return true
+            }
+            return false
         case "d":
             guard document?.duplicateSelected() == true else { return false }
             needsDisplay = true
@@ -1267,6 +1330,7 @@ final class AnnotationCanvasNSView: NSView {
             editor.isBold = existing.isBold
             editor.isItalic = existing.isItalic
             editor.isUnderline = existing.isUnderline
+            editor.alignment = existing.alignment
             editor.beginEditing(initialText: existing.text)
             editingOriginalObject = existing
         } else {
@@ -1279,6 +1343,7 @@ final class AnnotationCanvasNSView: NSView {
             editor.isBold = currentTextBold
             editor.isItalic = currentTextItalic
             editor.isUnderline = currentTextUnderline
+            editor.alignment = currentTextAlignment
             editor.beginEditing(initialText: "")
             editingOriginalObject = nil
         }
@@ -1296,7 +1361,8 @@ final class AnnotationCanvasNSView: NSView {
             editor.glyphStrokeColor != nil,
             editor.isBold,
             editor.isItalic,
-            editor.isUnderline
+            editor.isUnderline,
+            editor.alignment
         )
     }
 
@@ -1336,7 +1402,8 @@ final class AnnotationCanvasNSView: NSView {
                 || editorGlyphStrokeColor != existing.glyphStrokeColor
                 || editor.isBold != existing.isBold
                 || editor.isItalic != existing.isItalic
-                || editor.isUnderline != existing.isUnderline {
+                || editor.isUnderline != existing.isUnderline
+                || editor.alignment != existing.alignment {
                 // Mutated text or fontSize — push one undo step, then update.
                 doc.beginDrag()
                 existing.text = finalText
@@ -1348,6 +1415,7 @@ final class AnnotationCanvasNSView: NSView {
                 existing.isBold = editor.isBold
                 existing.isItalic = editor.isItalic
                 existing.isUnderline = editor.isUnderline
+                existing.alignment = editor.alignment
             }
         } else if !finalText.isEmpty {
             // Fresh edit with content → create a new TextObject using the
@@ -1363,6 +1431,7 @@ final class AnnotationCanvasNSView: NSView {
                 isBold: editor.isBold,
                 isItalic: editor.isItalic,
                 isUnderline: editor.isUnderline,
+                alignment: editor.alignment,
                 style: currentStyle
             )
             doc.addObject(newObj)

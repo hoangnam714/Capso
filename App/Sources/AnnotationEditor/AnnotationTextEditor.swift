@@ -1,5 +1,6 @@
 // App/Sources/AnnotationEditor/AnnotationTextEditor.swift
 import AppKit
+import AnnotationKit
 
 @MainActor
 protocol AnnotationTextEditorDelegate: AnyObject {
@@ -74,6 +75,13 @@ final class AnnotationTextEditor: NSScrollView {
     var isUnderline: Bool = false {
         didSet {
             guard isUnderline != oldValue else { return }
+            applyAttributes()
+        }
+    }
+
+    var alignment: AnnotationTextAlignment = .left {
+        didSet {
+            guard alignment != oldValue else { return }
             applyAttributes()
         }
     }
@@ -196,9 +204,13 @@ final class AnnotationTextEditor: NSScrollView {
 
     private var attributes: [NSAttributedString.Key: Any] {
         let effective = max(1, fontSize * zoomScale)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = alignment.nsTextAlignment
+        paragraph.lineBreakMode = .byWordWrapping
         var attrs: [NSAttributedString.Key: Any] = [
             .font: makeFont(size: effective),
             .foregroundColor: textColor,
+            .paragraphStyle: paragraph,
         ]
         if isUnderline {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -209,12 +221,19 @@ final class AnnotationTextEditor: NSScrollView {
     func drawGlyphTraceBehindText() {
         guard let glyphStrokeColor, !text.isEmpty else { return }
         let effective = max(1, fontSize * zoomScale)
-        let attrs: [NSAttributedString.Key: Any] = [
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = alignment.nsTextAlignment
+        paragraph.lineBreakMode = .byWordWrapping
+        var attrs: [NSAttributedString.Key: Any] = [
             .font: makeFont(size: effective),
             .foregroundColor: NSColor.clear,
             .strokeColor: glyphStrokeColor,
             .strokeWidth: Self.liveGlyphTraceStrokeWidth,
+            .paragraphStyle: paragraph,
         ]
+        if isUnderline {
+            attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
         (text as NSString).draw(
             with: frame.insetBy(dx: textInset, dy: textInset),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
@@ -223,6 +242,7 @@ final class AnnotationTextEditor: NSScrollView {
     }
 
     private func applyAttributes() {
+        textView.alignment = alignment.nsTextAlignment
         textView.typingAttributes = attributes
         if let storage = textView.textStorage, storage.length > 0 {
             storage.setAttributes(attributes, range: NSRange(location: 0, length: storage.length))

@@ -15,6 +15,7 @@ struct AnnotationToolbar: View {
     @Binding var textBoldEnabled: Bool
     @Binding var textItalicEnabled: Bool
     @Binding var textUnderlineEnabled: Bool
+    @Binding var textAlignment: AnnotationTextAlignment
     @Binding var redactionMode: RedactionMode
     @Binding var showBeautifyPanel: Bool
     /// True when an inline text edit is active (either via the text tool or
@@ -36,6 +37,8 @@ struct AnnotationToolbar: View {
     let onPin: () -> Void
     let onCancel: () -> Void
     let onCrop: () -> Void
+    var onInsertImageFromClipboard: (() -> Void)? = nil
+    var onInsertImageFromFile: (() -> Void)? = nil
 
     /// Tool that owns the size slider (selection overrides the active tool).
     private var effectiveSizeTool: AnnotationTool {
@@ -88,14 +91,43 @@ struct AnnotationToolbar: View {
             toolButton(.select, icon: "cursorarrow", label: "Select")
             toolButton(.arrow, icon: "arrow.up.right", label: "Arrow")
             toolButton(.line, icon: "line.diagonal", label: "Line")
-            toolButton(.rectangle, icon: "rectangle", label: "Rectangle")
-            toolButton(.ellipse, icon: "circle", label: "Ellipse")
+            toolButton(.rectangle, icon: "rectangle", label: "Rectangle (⌃: square)")
+            toolButton(.ellipse, icon: "circle", label: "Ellipse (⌃: circle)")
             textToolButton
             toolButton(.freehand, icon: "pencil.tip", label: "Draw")
             toolButton(.pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur")
             toolButton(.counter, icon: "number.circle.fill", label: "Counter")
             toolButton(.highlighter, icon: "highlighter", label: "Highlighter")
+            toolbarDivider
+            insertImageButton(
+                icon: "doc.on.clipboard",
+                help: "Paste Image from Clipboard",
+                action: { onInsertImageFromClipboard?() }
+            )
+            insertImageButton(
+                icon: "photo.badge.plus",
+                help: "Insert Image from File…",
+                action: { onInsertImageFromFile?() }
+            )
         }
+    }
+
+    private func insertImageButton(
+        icon: String,
+        help: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(toolbarIconForeground(isActive: false))
+                .frame(width: 30, height: 26)
+                .background(toolbarButtonBackground(isActive: false))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(toolbarButtonStroke)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func toolButton(_ tool: AnnotationTool, icon: String, label: LocalizedStringKey) -> some View {
@@ -212,6 +244,17 @@ struct AnnotationToolbar: View {
                 textEffectToggle("Bold", isOn: $textBoldEnabled, help: "Bold")
                 textEffectToggle("Italic", isOn: $textItalicEnabled, help: "Italic")
                 textEffectToggle("Underline", isOn: $textUnderlineEnabled, help: "Underline")
+
+                Picker("", selection: $textAlignment) {
+                    Image(systemName: "text.alignleft").tag(AnnotationTextAlignment.left)
+                    Image(systemName: "text.aligncenter").tag(AnnotationTextAlignment.center)
+                    Image(systemName: "text.alignright").tag(AnnotationTextAlignment.right)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 96)
+                .help("Text Alignment")
+                .controlSize(.small)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

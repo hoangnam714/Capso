@@ -4,6 +4,22 @@ import Foundation
 import CoreGraphics
 @testable import AnnotationKit
 
+private func makeSolidImage(width: Int, height: Int) -> CGImage? {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()
+}
+
 @Suite("AnnotationPersistence")
 struct AnnotationPersistenceTests {
     @Test("Sidecar round-trips all object kinds")
@@ -35,8 +51,14 @@ struct AnnotationPersistenceTests {
             fillColor: .yellow,
             isBold: true,
             isItalic: true,
-            isUnderline: true
+            isUnderline: true,
+            alignment: .right
         ))
+        let embedded = try #require(makeSolidImage(width: 16, height: 12))
+        doc.addObject(try #require(ImageObject(
+            cgImage: embedded,
+            rect: CGRect(x: 50, y: 60, width: 40, height: 30)
+        )))
         doc.addObject(FreehandObject(
             points: [CGPoint(x: 1, y: 2), CGPoint(x: 3, y: 4), CGPoint(x: 5, y: 6)],
             style: StrokeStyle(color: .orange, lineWidth: 5, opacity: 0.5)
@@ -66,7 +88,7 @@ struct AnnotationPersistenceTests {
 
         #expect(restored.imageSize == CGSize(width: 640, height: 480))
         #expect(restored.cropRect == CGRect(x: 10, y: 10, width: 400, height: 300))
-        #expect(restored.objects.count == 9)
+        #expect(restored.objects.count == 10)
 
         let arrow = try #require(restored.objects[0] as? ArrowObject)
         #expect(arrow.start == CGPoint(x: 10, y: 20))
@@ -80,13 +102,19 @@ struct AnnotationPersistenceTests {
         #expect(text.isBold == true)
         #expect(text.isItalic == true)
         #expect(text.isUnderline == true)
+        #expect(text.alignment == .right)
 
-        let pixelate = try #require(restored.objects[6] as? PixelateObject)
+        let image = try #require(restored.objects[5] as? ImageObject)
+        #expect(image.rect == CGRect(x: 50, y: 60, width: 40, height: 30))
+        #expect(image.cgImage?.width == 16)
+        #expect(image.cgImage?.height == 12)
+
+        let pixelate = try #require(restored.objects[7] as? PixelateObject)
         #expect(pixelate.mode == .blur)
         #expect(pixelate.blockSize == 8)
 
-        let counter1 = try #require(restored.objects[7] as? CounterObject)
-        let counter2 = try #require(restored.objects[8] as? CounterObject)
+        let counter1 = try #require(restored.objects[8] as? CounterObject)
+        let counter2 = try #require(restored.objects[9] as? CounterObject)
         #expect(counter1.number == 1)
         #expect(counter2.number == 2)
     }

@@ -79,9 +79,9 @@ public final class AnnotationDocument {
     /// Pastes the clipboard object with a cascading offset. Returns `false` if the clipboard is empty.
     @discardableResult
     public func pasteClipboard() -> Bool {
-        guard let objectClipboard else { return false }
+        guard let clipboard = objectClipboard else { return false }
         pasteCount += 1
-        let pasted = objectClipboard.copy()
+        let pasted = clipboard.copy()
         let offset = CGSize(
             width: Self.clipboardOffset.width * CGFloat(pasteCount),
             height: Self.clipboardOffset.height * CGFloat(pasteCount)
@@ -89,6 +89,27 @@ public final class AnnotationDocument {
         pasted.move(by: offset)
         addObject(pasted)
         return true
+    }
+
+    /// Inserts a PNG/JPEG image annotation scaled to fit the canvas.
+    @discardableResult
+    public func insertImage(_ cgImage: CGImage, at center: CGPoint? = nil) -> ImageObject? {
+        let pixelSize = CGSize(width: cgImage.width, height: cgImage.height)
+        let placementCenter = center ?? {
+            if let crop = cropRect {
+                return CGPoint(x: crop.midX, y: crop.midY)
+            }
+            return CGPoint(x: imageSize.width / 2, y: imageSize.height / 2)
+        }()
+        let canvasSize = cropRect?.size ?? imageSize
+        let rect = ImageObject.fittingRect(
+            forPixelSize: pixelSize,
+            canvasSize: canvasSize,
+            center: placementCenter
+        )
+        guard let object = ImageObject(cgImage: cgImage, rect: rect) else { return nil }
+        addObject(object)
+        return object
     }
 
     public func selectObject(id: ObjectID?) {

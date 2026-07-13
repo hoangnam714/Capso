@@ -2,6 +2,20 @@ import Foundation
 import CoreGraphics
 import AppKit
 
+public enum AnnotationTextAlignment: String, Codable, CaseIterable, Sendable {
+    case left
+    case center
+    case right
+
+    public var nsTextAlignment: NSTextAlignment {
+        switch self {
+        case .left: .left
+        case .center: .center
+        case .right: .right
+        }
+    }
+}
+
 public final class TextObject: AnnotationObject, @unchecked Sendable {
     private static let glyphTraceStrokeWidth: CGFloat = 3.0
 
@@ -18,6 +32,7 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
     public var isBold: Bool
     public var isItalic: Bool
     public var isUnderline: Bool
+    public var alignment: AnnotationTextAlignment
 
     public init(
         text: String,
@@ -31,6 +46,7 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
         isBold: Bool = false,
         isItalic: Bool = false,
         isUnderline: Bool = false,
+        alignment: AnnotationTextAlignment = .left,
         style: StrokeStyle = StrokeStyle()
     ) {
         self.text = text
@@ -44,6 +60,7 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
         self.isBold = isBold
         self.isItalic = isItalic
         self.isUnderline = isUnderline
+        self.alignment = alignment
         self.style = style
     }
 
@@ -58,10 +75,18 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
         return NSFont(descriptor: descriptor, size: fontSize) ?? baseFont
     }
 
+    private var paragraphStyle: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.alignment = alignment.nsTextAlignment
+        style.lineBreakMode = .byWordWrapping
+        return style
+    }
+
     private var fillAttributes: [NSAttributedString.Key: Any] {
         var attrs: [NSAttributedString.Key: Any] = [
             .font: makeFont(),
             .foregroundColor: style.color.nsColor.withAlphaComponent(style.opacity),
+            .paragraphStyle: paragraphStyle,
         ]
         if isUnderline {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -162,6 +187,7 @@ public final class TextObject: AnnotationObject, @unchecked Sendable {
             isBold: isBold,
             isItalic: isItalic,
             isUnderline: isUnderline,
+            alignment: alignment,
             style: style
         )
     }
