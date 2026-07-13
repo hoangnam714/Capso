@@ -9,6 +9,9 @@ extension Notification.Name {
     static let openPreferencesTab = Notification.Name("openPreferencesTab")
     static let openScreenshotSettings = Notification.Name("openScreenshotSettings")
     static let capturePresetChanged = Notification.Name("capturePresetChanged")
+    /// Broadcast while an area drag spans multiple displays so peer overlays
+    /// can draw the intersection of the global selection with their screen.
+    static let captureCrossScreenSelectionChanged = Notification.Name("captureCrossScreenSelectionChanged")
     /// Posted by PreferencesWindow when the window is already open and the
     /// caller wants the visible Preferences UI to switch to a specific tab.
     /// Only PreferencesView observes this — NOT AppDelegate (which would cause
@@ -36,13 +39,22 @@ final class CaptureOverlayView: NSView {
 
     private var mode: CaptureOverlayMode = .area
     private var isDragging = false
-    private var dragStart: NSPoint = .zero
-    private var dragEnd: NSPoint = .zero
+    /// True when this overlay owns the active cross-screen drag.
+    private var isDragSource = false
+    /// Global AppKit (bottom-left) drag anchors for cross-display selection.
+    private var dragStartGlobal: NSPoint = .zero
+    private var dragEndGlobal: NSPoint = .zero
+    /// Mirrored global selection from another overlay while it is dragging.
+    private var remoteGlobalSelection: CGRect?
     private var currentMouseLocation: NSPoint?
+    private var crossScreenDragMonitor: Any?
 
     /// The currently active capture preset. Starts from settings and can be
     /// changed at runtime via R-key cycling or the right-click context menu.
     private var activePreset: CapturePreset
+
+    /// Object identity of the overlay currently owning a multi-screen drag.
+    private static var activeDragSourceID: ObjectIdentifier?
 
     // Window selection state
     private var hoveredWindowID: CGWindowID?
@@ -76,6 +88,7 @@ final class CaptureOverlayView: NSView {
     private var presetMenuMap: [Int: CapturePreset] = [:]
 
     nonisolated(unsafe) private var presetObserver: Any?
+    nonisolated(unsafe) private var crossScreenSelectionObserver: Any?
 
     init(
         frame: NSRect,
@@ -96,6 +109,24 @@ final class CaptureOverlayView: NSView {
             owner: self,
             userInfo: nil
         ))
+
+        crossScreenSelectionObserver = NotificationCenter.default.addObserver(
+            forName: .captureCrossScreenSelectionChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let sourceID = notification.userInfo?["sourceID"] as? ObjectIdentifier
+            let hasRect = notification.userInfo?["x"] != nil
+            let globalRect: CGRect? = hasRect ? CGRect(
+                x: notification.userInfo?["x"] as? CGFloat ?? 0,
+                y: notification.userInfo?["y"] as? CGFloat ?? 0,
+                width: notification.userInfo?["width"] as? CGFloat ?? 0,
+                height: notification.userInfo?["height"] as? CGFloat ?? 0
+            ) : nil
+            MainActor.assumeIsolated {
+                self?.handleRemoteSelectionChange(sourceID: sourceID, globalRect: globalRect)
+            }
+        }
 
         // Listen for preset changes from other overlay views (multi-screen sync)
         guard !self.presetsDisabled else { return }
@@ -127,15 +158,21 @@ final class CaptureOverlayView: NSView {
         if let presetObserver {
             NotificationCenter.default.removeObserver(presetObserver)
         }
+        if let crossScreenSelectionObserver {
+            NotificationCenter.default.removeObserver(crossScreenSelectionObserver)
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
     func resetSelection() {
+        endCrossScreenDrag(broadcastClear: isDragSource)
         isDragging = false
-        dragStart = .zero
-        dragEnd = .zero
+        isDragSource = false
+        dragStartGlobal = .zero
+        dragEndGlobal = .zero
+        remoteGlobalSelection = nil
         hoveredWindowID = nil
         currentMouseLocation = nil
         needsDisplay = true
@@ -257,34 +294,40 @@ final class CaptureOverlayView: NSView {
     }
 
     private func drawAreaMode(in context: CGContext) {
-        if isDragging {
+        if isDragging || remoteGlobalSelection != nil {
             let selectionRect = self.selectionRect
 
-            drawDimmedBackdrop(clearing: selectionRect, in: context)
+            drawDimmedBackdrop(clearing: selectionRect.isEmpty ? nil : selectionRect, in: context)
 
-            // Inner edge to help the fill read on bright backgrounds.
-            context.saveGState()
-            context.setStrokeColor(selectionInnerStrokeColor.cgColor)
-            context.setLineWidth(1.0)
-            context.stroke(selectionRect.insetBy(dx: 1, dy: 1))
-            context.restoreGState()
+            if !selectionRect.isEmpty {
+                // Inner edge to help the fill read on bright backgrounds.
+                context.saveGState()
+                context.setStrokeColor(selectionInnerStrokeColor.cgColor)
+                context.setLineWidth(1.0)
+                context.stroke(selectionRect.insetBy(dx: 1, dy: 1))
+                context.restoreGState()
 
-            // Selection border with shadow glow — visible on any background.
-            // Dark shadow makes it clear on light backgrounds,
-            // white border makes it clear on dark backgrounds.
-            context.saveGState()
-            context.setShadow(
-                offset: .zero,
-                blur: 10,
-                color: NSColor.black.withAlphaComponent(0.5).cgColor
-            )
-            context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
-            context.setLineWidth(1.5)
-            context.stroke(selectionRect)
-            context.restoreGState()
+                // Selection border with shadow glow — visible on any background.
+                // Dark shadow makes it clear on light backgrounds,
+                // white border makes it clear on dark backgrounds.
+                context.saveGState()
+                context.setShadow(
+                    offset: .zero,
+                    blur: 10,
+                    color: NSColor.black.withAlphaComponent(0.5).cgColor
+                )
+                context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
+                context.setLineWidth(1.5)
+                context.stroke(selectionRect)
+                context.restoreGState()
 
-            drawDimensionLabel(for: selectionRect, in: context)
-            if let currentMouseLocation {
+                // Dimension label only on the drag-source display to avoid duplicates.
+                if isDragSource {
+                    drawDimensionLabel(for: globalSelectionRect, localVisibleRect: selectionRect, in: context)
+                }
+            }
+
+            if isDragSource, let currentMouseLocation, bounds.contains(currentMouseLocation) {
                 drawReticle(at: currentMouseLocation, in: context)
             }
         } else {
@@ -319,7 +362,7 @@ final class CaptureOverlayView: NSView {
                     context.stroke(fixedRect)
                     context.restoreGState()
 
-                    drawDimensionLabel(for: fixedRect, in: context)
+                    drawDimensionLabel(for: fixedRect, localVisibleRect: fixedRect, in: context)
                 }
                 // Still draw badge even without a mouse location
                 drawPresetBadge(in: context)
@@ -504,16 +547,30 @@ final class CaptureOverlayView: NSView {
         )
     }
 
-    private var selectionRect: CGRect {
-        let x = min(dragStart.x, dragEnd.x)
-        let y = min(dragStart.y, dragEnd.y)
-        let w = abs(dragEnd.x - dragStart.x)
-        let h = abs(dragEnd.y - dragStart.y)
-        return CGRect(x: x, y: y, width: w, height: h)
+    private var globalSelectionRect: CGRect {
+        if isDragSource {
+            return CaptureDisplayGeometry.normalizedRect(from: dragStartGlobal, to: dragEndGlobal)
+        }
+        return remoteGlobalSelection ?? .null
     }
 
-    private func drawDimensionLabel(for rect: CGRect, in context: CGContext) {
-        let text = "\(Int(rect.width)) x \(Int(rect.height))"
+    /// Visible portion of the active selection on this screen, in view-local coords.
+    private var selectionRect: CGRect {
+        guard let screenFrame = window?.screen?.frame else { return .zero }
+        let global = globalSelectionRect
+        guard !global.isNull, !global.isEmpty else { return .zero }
+        return CaptureDisplayGeometry.intersectingScreenLocalRect(
+            globalAppKitRect: global,
+            screenFrame: screenFrame
+        ) ?? .zero
+    }
+
+    private func drawDimensionLabel(
+        for globalOrLocalRect: CGRect,
+        localVisibleRect: CGRect,
+        in context: CGContext
+    ) {
+        let text = "\(Int(globalOrLocalRect.width)) x \(Int(globalOrLocalRect.height))"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: dimensionFont,
             .foregroundColor: dimensionTextColor
@@ -540,8 +597,8 @@ final class CaptureOverlayView: NSView {
         let gap: CGFloat = badgeText != nil ? 6 : 0
         let totalWidth = textLabelWidth + gap + badgeWidth
 
-        let labelX = rect.midX - totalWidth / 2
-        let labelY = rect.minY - labelHeight - 8
+        let labelX = localVisibleRect.midX - totalWidth / 2
+        let labelY = localVisibleRect.minY - labelHeight - 8
 
         // Draw main dimension pill
         let bgRect = CGRect(x: labelX, y: labelY, width: textLabelWidth, height: labelHeight)
@@ -668,6 +725,11 @@ final class CaptureOverlayView: NSView {
     override func mouseDown(with event: NSEvent) {
         switch mode {
         case .area:
+            // Another overlay already owns a cross-screen drag.
+            if let active = Self.activeDragSourceID, active != ObjectIdentifier(self) {
+                return
+            }
+
             // Fixed-size: no drag — capture immediately centered on cursor
             if let fixedSize = activePreset.fixedPixelSize {
                 let loc = convert(event.locationInWindow, from: nil)
@@ -682,10 +744,7 @@ final class CaptureOverlayView: NSView {
                 return
             }
 
-            isDragging = true
-            dragStart = convert(event.locationInWindow, from: nil)
-            dragEnd = dragStart
-            needsDisplay = true
+            beginCrossScreenDrag(at: NSEvent.mouseLocation)
 
         case .windowSelection:
             if let windowID = hoveredWindowID {
@@ -695,93 +754,195 @@ final class CaptureOverlayView: NSView {
         }
     }
 
-    /// Apply aspect-ratio constraint to a raw drag endpoint, clamped to view bounds.
-    private func constrainedDragEnd(rawEnd: NSPoint) -> NSPoint {
+    /// Apply aspect-ratio constraint in global AppKit coordinates, clamped to
+    /// the virtual desktop union so the selection can span differently sized displays.
+    private func constrainedGlobalDragEnd(rawEnd: NSPoint) -> NSPoint {
         guard let ratio = activePreset.ratio, !activePreset.isFixedSize else {
             return rawEnd
         }
 
-        let dx = rawEnd.x - dragStart.x
-        let dy = rawEnd.y - dragStart.y
+        let desktop = CaptureDisplayGeometry.virtualDesktopBounds(
+            screenFrames: NSScreen.screens.map(\.frame)
+        )
+        guard !desktop.isNull else { return rawEnd }
+
+        let dx = rawEnd.x - dragStartGlobal.x
+        let dy = rawEnd.y - dragStartGlobal.y
 
         var endX: CGFloat
         var endY: CGFloat
 
-        // Use the axis with the larger absolute delta as the controlling axis
         if abs(dx) >= abs(dy) {
             let constrainedH = abs(dx) / ratio
-            endX = dragStart.x + dx
-            endY = dragStart.y + (dy >= 0 ? constrainedH : -constrainedH)
+            endX = dragStartGlobal.x + dx
+            endY = dragStartGlobal.y + (dy >= 0 ? constrainedH : -constrainedH)
         } else {
             let constrainedW = abs(dy) * ratio
-            endX = dragStart.x + (dx >= 0 ? constrainedW : -constrainedW)
-            endY = dragStart.y + dy
+            endX = dragStartGlobal.x + (dx >= 0 ? constrainedW : -constrainedW)
+            endY = dragStartGlobal.y + dy
         }
 
-        // Clamp to view bounds while maintaining the aspect ratio.
-        // If either axis goes out of bounds, shrink back along both axes.
-        let minX: CGFloat = 0
-        let minY: CGFloat = 0
-        let maxX = bounds.width
-        let maxY = bounds.height
+        let minX = desktop.minX
+        let minY = desktop.minY
+        let maxX = desktop.maxX
+        let maxY = desktop.maxY
 
         if endX < minX {
-            let clampedWidth = dragStart.x - minX
+            let clampedWidth = dragStartGlobal.x - minX
             let clampedHeight = clampedWidth / ratio
             endX = minX
-            endY = dragStart.y + (endY >= dragStart.y ? clampedHeight : -clampedHeight)
+            endY = dragStartGlobal.y + (endY >= dragStartGlobal.y ? clampedHeight : -clampedHeight)
         } else if endX > maxX {
-            let clampedWidth = maxX - dragStart.x
+            let clampedWidth = maxX - dragStartGlobal.x
             let clampedHeight = clampedWidth / ratio
             endX = maxX
-            endY = dragStart.y + (endY >= dragStart.y ? clampedHeight : -clampedHeight)
+            endY = dragStartGlobal.y + (endY >= dragStartGlobal.y ? clampedHeight : -clampedHeight)
         }
 
         if endY < minY {
-            let clampedHeight = dragStart.y - minY
+            let clampedHeight = dragStartGlobal.y - minY
             let clampedWidth = clampedHeight * ratio
             endY = minY
-            endX = dragStart.x + (endX >= dragStart.x ? clampedWidth : -clampedWidth)
+            endX = dragStartGlobal.x + (endX >= dragStartGlobal.x ? clampedWidth : -clampedWidth)
         } else if endY > maxY {
-            let clampedHeight = maxY - dragStart.y
+            let clampedHeight = maxY - dragStartGlobal.y
             let clampedWidth = clampedHeight * ratio
             endY = maxY
-            endX = dragStart.x + (endX >= dragStart.x ? clampedWidth : -clampedWidth)
+            endX = dragStartGlobal.x + (endX >= dragStartGlobal.x ? clampedWidth : -clampedWidth)
         }
 
         return NSPoint(x: endX, y: endY)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard case .area = mode else { return }
-        let rawEnd = convert(event.locationInWindow, from: nil)
-        dragEnd = constrainedDragEnd(rawEnd: rawEnd)
-        // Reticle tracks the constrained corner so it stays on the selection edge
-        currentMouseLocation = dragEnd
-
-        // Ensure cursor stays hidden during drag (it can reappear on screen edges)
-        if !cursorHidden {
-            NSCursor.hide()
-            cursorHidden = true
-        }
-
-        needsDisplay = true
+        guard case .area = mode, isDragSource else { return }
+        updateCrossScreenDrag(to: NSEvent.mouseLocation)
     }
 
     override func mouseUp(with event: NSEvent) {
         guard case .area = mode else { return }
         // Fixed-size mode already captured in mouseDown — skip mouseUp
         guard !activePreset.isFixedSize else { return }
-        let rawEnd = convert(event.locationInWindow, from: nil)
-        dragEnd = constrainedDragEnd(rawEnd: rawEnd)
-        isDragging = false
+        guard isDragSource else { return }
 
-        let rect = selectionRect
-        if rect.width > 5 && rect.height > 5 {
+        updateCrossScreenDrag(to: NSEvent.mouseLocation)
+        let global = globalSelectionRect
+        endCrossScreenDrag(broadcastClear: true)
+
+        guard let screenFrame = window?.screen?.frame else { return }
+        let localRect = CaptureDisplayGeometry.screenLocalRect(
+            fromGlobalAppKitRect: global,
+            screenFrame: screenFrame
+        )
+        if localRect.width > 5 && localRect.height > 5 {
             restoreCursorIfNeeded()
-            onSelectionComplete?(rect)
+            onSelectionComplete?(localRect)
         }
         needsDisplay = true
+    }
+
+    private func beginCrossScreenDrag(at globalPoint: NSPoint) {
+        isDragging = true
+        isDragSource = true
+        Self.activeDragSourceID = ObjectIdentifier(self)
+        remoteGlobalSelection = nil
+        dragStartGlobal = globalPoint
+        dragEndGlobal = globalPoint
+        currentMouseLocation = viewLocalPoint(fromGlobal: globalPoint)
+        installCrossScreenDragMonitor()
+        broadcastCrossScreenSelection(globalSelectionRect)
+        needsDisplay = true
+    }
+
+    private func updateCrossScreenDrag(to globalPoint: NSPoint) {
+        dragEndGlobal = constrainedGlobalDragEnd(rawEnd: globalPoint)
+        currentMouseLocation = viewLocalPoint(fromGlobal: dragEndGlobal)
+
+        if !cursorHidden {
+            NSCursor.hide()
+            cursorHidden = true
+        }
+
+        broadcastCrossScreenSelection(globalSelectionRect)
+        needsDisplay = true
+    }
+
+    private func endCrossScreenDrag(broadcastClear: Bool) {
+        removeCrossScreenDragMonitor()
+        if isDragSource, Self.activeDragSourceID == ObjectIdentifier(self) {
+            Self.activeDragSourceID = nil
+        }
+        isDragging = false
+        isDragSource = false
+        if broadcastClear {
+            broadcastCrossScreenSelection(nil)
+        }
+    }
+
+    private func installCrossScreenDragMonitor() {
+        removeCrossScreenDragMonitor()
+        // Keep updating even when the cursor moves onto another overlay window.
+        crossScreenDragMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
+            guard let self, self.isDragSource else { return event }
+            if event.type == .leftMouseDragged {
+                self.updateCrossScreenDrag(to: NSEvent.mouseLocation)
+                return nil
+            }
+            if event.type == .leftMouseUp {
+                // Defer so we don't remove this monitor from inside its callback.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isDragSource else { return }
+                    self.mouseUp(with: event)
+                }
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeCrossScreenDragMonitor() {
+        if let crossScreenDragMonitor {
+            NSEvent.removeMonitor(crossScreenDragMonitor)
+            self.crossScreenDragMonitor = nil
+        }
+    }
+
+    private func broadcastCrossScreenSelection(_ globalRect: CGRect?) {
+        var userInfo: [AnyHashable: Any] = [
+            "sourceID": ObjectIdentifier(self)
+        ]
+        if let globalRect, !globalRect.isNull, !globalRect.isEmpty {
+            userInfo["x"] = globalRect.origin.x
+            userInfo["y"] = globalRect.origin.y
+            userInfo["width"] = globalRect.size.width
+            userInfo["height"] = globalRect.size.height
+        }
+        NotificationCenter.default.post(
+            name: .captureCrossScreenSelectionChanged,
+            object: nil,
+            userInfo: userInfo
+        )
+    }
+
+    private func handleRemoteSelectionChange(sourceID: ObjectIdentifier?, globalRect: CGRect?) {
+        if let sourceID, sourceID == ObjectIdentifier(self) { return }
+        if isDragSource { return }
+
+        remoteGlobalSelection = globalRect
+        needsDisplay = true
+    }
+
+    private func viewLocalPoint(fromGlobal globalPoint: NSPoint) -> NSPoint? {
+        guard let screenFrame = window?.screen?.frame,
+              screenFrame.contains(globalPoint) else {
+            return nil
+        }
+        return NSPoint(
+            x: globalPoint.x - screenFrame.origin.x,
+            y: globalPoint.y - screenFrame.origin.y
+        )
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -836,7 +997,7 @@ final class CaptureOverlayView: NSView {
         } else if event.keyCode == 49 { // Space
             requestSpaceToggle()
         } else if event.keyCode == 15 { // R key
-            guard case .area = mode, !isDragging, !presetsDisabled else { return }
+            guard case .area = mode, !isDragging, remoteGlobalSelection == nil, !presetsDisabled else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let backward = flags.contains(.shift)
             cyclePreset(forward: !backward)
@@ -853,10 +1014,22 @@ final class CaptureOverlayView: NSView {
     }
 
     private func cancelCurrentSelection() {
+        endCrossScreenDrag(broadcastClear: isDragSource)
         isDragging = false
-        let currentLocation = currentMouseLocation ?? .zero
-        dragStart = currentLocation
-        dragEnd = currentLocation
+        isDragSource = false
+        remoteGlobalSelection = nil
+        if let currentMouseLocation,
+           let screenFrame = window?.screen?.frame {
+            let global = NSPoint(
+                x: currentMouseLocation.x + screenFrame.origin.x,
+                y: currentMouseLocation.y + screenFrame.origin.y
+            )
+            dragStartGlobal = global
+            dragEndGlobal = global
+        } else {
+            dragStartGlobal = .zero
+            dragEndGlobal = .zero
+        }
         needsDisplay = true
     }
 

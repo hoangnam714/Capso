@@ -19,6 +19,7 @@ struct AnnotationCanvasView: NSViewRepresentable {
     let textItalic: Bool
     let textUnderline: Bool
     let textAlignment: AnnotationTextAlignment
+    let penStyle: PenStyle
     let zoomScale: CGFloat
     let refreshTrigger: Int
     var textRegions: [CGRect] = []
@@ -59,6 +60,7 @@ struct AnnotationCanvasView: NSViewRepresentable {
         view.currentTextItalic = textItalic
         view.currentTextUnderline = textUnderline
         view.currentTextAlignment = textAlignment
+        view.currentPenStyle = penStyle
         view.zoomScale = zoomScale
         view.textRegions = textRegions
         view.onDocumentChanged = { onDocumentChanged?() }
@@ -95,6 +97,7 @@ struct AnnotationCanvasView: NSViewRepresentable {
         nsView.currentTextItalic = textItalic
         nsView.currentTextUnderline = textUnderline
         nsView.currentTextAlignment = textAlignment
+        nsView.currentPenStyle = penStyle
         nsView.zoomScale = zoomScale
         nsView.textRegions = textRegions
         nsView.onDocumentChanged = { onDocumentChanged?() }

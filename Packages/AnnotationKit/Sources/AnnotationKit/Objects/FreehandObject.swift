@@ -5,10 +5,16 @@ public final class FreehandObject: AnnotationObject, @unchecked Sendable {
     public let id = ObjectID()
     public var style: StrokeStyle
     public var points: [CGPoint]
+    public var penStyle: PenStyle
     private var _cachedPath: CGPath?
 
-    public init(points: [CGPoint] = [], style: StrokeStyle = StrokeStyle()) {
+    public init(
+        points: [CGPoint] = [],
+        penStyle: PenStyle = .pen,
+        style: StrokeStyle = StrokeStyle()
+    ) {
         self.points = points
+        self.penStyle = penStyle
         self.style = style
     }
 
@@ -22,19 +28,28 @@ public final class FreehandObject: AnnotationObject, @unchecked Sendable {
         _cachedPath = nil
     }
 
-    private var smoothPath: CGPath {
-        if let cached = _cachedPath { return cached }
-        let path = BezierSmoothing.smoothPath(from: points)
-        _cachedPath = path
+    private var strokePath: CGPath {
+        if penStyle.usesSmoothing {
+            if let cached = _cachedPath { return cached }
+            let path = BezierSmoothing.smoothPath(from: points)
+            _cachedPath = path
+            return path
+        }
+        let path = CGMutablePath()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
         return path
     }
 
     public var bounds: CGRect {
-        smoothPath.boundingBoxOfPath.insetBy(dx: -style.lineWidth, dy: -style.lineWidth)
+        strokePath.boundingBoxOfPath.insetBy(dx: -style.lineWidth, dy: -style.lineWidth)
     }
 
     public func hitTest(point: CGPoint, threshold: CGFloat) -> Bool {
-        let strokedPath = smoothPath.copy(
+        let strokedPath = strokePath.copy(
             strokingWithWidth: style.lineWidth + threshold * 2,
             lineCap: .round, lineJoin: .round, miterLimit: 0
         )
@@ -45,10 +60,11 @@ public final class FreehandObject: AnnotationObject, @unchecked Sendable {
         ctx.saveGState()
         ctx.setStrokeColor(style.color.cgColor)
         ctx.setLineWidth(style.lineWidth)
-        ctx.setAlpha(style.opacity)
-        ctx.setLineCap(.round)
+        ctx.setAlpha(style.opacity * penStyle.opacityMultiplier)
+        ctx.setBlendMode(penStyle.blendMode)
+        ctx.setLineCap(penStyle == .pencil ? .square : .round)
         ctx.setLineJoin(.round)
-        ctx.addPath(smoothPath)
+        ctx.addPath(strokePath)
         ctx.strokePath()
         ctx.restoreGState()
     }
@@ -62,6 +78,6 @@ public final class FreehandObject: AnnotationObject, @unchecked Sendable {
     }
 
     public func copy() -> any AnnotationObject {
-        FreehandObject(points: points, style: style)
+        FreehandObject(points: points, penStyle: penStyle, style: style)
     }
 }

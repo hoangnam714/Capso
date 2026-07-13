@@ -63,6 +63,7 @@ struct AnnotationEditorView: View {
     @AppStorage("annotationTextItalicEnabled") private var textItalicEnabled: Bool = false
     @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
     @AppStorage("annotationTextAlignment") private var textAlignment: AnnotationTextAlignment = .left
+    @AppStorage("annotationPenStyle") private var penStyle: PenStyle = .pen
     /// Preserved font size for the Text tool. Swapped in/out of `lineWidth`
     /// as the user toggles tools — same pattern as savedBlockSize etc.
     @AppStorage("annotationTextFontSize") private var savedTextFontSize: Double = 48
@@ -277,6 +278,7 @@ struct AnnotationEditorView: View {
             textAlignment: $textAlignment,
             redactionMode: $redactionMode,
             showBeautifyPanel: $showBeautifyPanel,
+            penStyle: $penStyle,
             isEditingText: isEditingText,
             sizeControlTool: sizeControlTool,
             canUndo: document.canUndo,
@@ -298,6 +300,10 @@ struct AnnotationEditorView: View {
         GeometryReader { geo in
             ScrollView([.horizontal, .vertical]) {
                 previewCanvas
+                    .frame(
+                        minWidth: geo.size.width,
+                        minHeight: geo.size.height
+                    )
             }
             .background(Color(white: 0.12))
             .onAppear { handleCanvasAppear(size: geo.size) }
@@ -313,7 +319,11 @@ struct AnnotationEditorView: View {
             .onChange(of: textItalicEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textAlignment) { _, _ in updateSelectedStyle() }
+            .onChange(of: penStyle) { _, _ in updateSelectedStyle() }
             .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
+            .onChange(of: beautifySettings.isEnabled) { _, _ in
+                refitToCurrentWindow()
+            }
             .onChange(of: document.selectedObjectID, handleSelectionChange)
             .onChange(of: geo.size, handleCanvasSizeChange)
         }
@@ -349,6 +359,7 @@ struct AnnotationEditorView: View {
             textItalic: textItalicEnabled,
             textUnderline: textUnderlineEnabled,
             textAlignment: textAlignment,
+            penStyle: penStyle,
             zoomScale: zoomScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -410,7 +421,9 @@ struct AnnotationEditorView: View {
     }
 
     private var canvasShadowRadius: CGFloat {
-        beautifySettings.clampedShadowRadius * zoomScale
+        beautifySettings.isEnabled && beautifySettings.shadowEnabled
+            ? beautifySettings.clampedShadowRadius * zoomScale
+            : 0
     }
 
     private var canvasShadowOffsetY: CGFloat {
@@ -486,6 +499,9 @@ struct AnnotationEditorView: View {
             }
             redactionMode = pixelate.mode
             return
+        }
+        if let freehand = object as? FreehandObject, freehand.style.opacity >= 0.5 {
+            penStyle = freehand.penStyle
         }
         if lineWidth != object.style.lineWidth {
             lineWidth = object.style.lineWidth
@@ -594,6 +610,9 @@ struct AnnotationEditorView: View {
                 text.isUnderline = textUnderlineEnabled
                 text.alignment = textAlignment
                 text.style = currentStyle
+            } else if let freehand = obj as? FreehandObject {
+                freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
+                freehand.style = currentStyle
             } else {
                 obj.style = currentStyle
             }

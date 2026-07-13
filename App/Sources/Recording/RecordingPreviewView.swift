@@ -71,7 +71,7 @@ struct RecordingPreviewView: View {
                 } else {
                     VStack(spacing: 6) {
                         quickActionButton("Copy", systemImage: "doc.on.doc", action: onCopy)
-                        quickActionButton("Save", systemImage: "arrow.down.doc", action: onSave)
+                        saveQuickActionButton(action: onSave)
                     }
                 }
             }
@@ -110,6 +110,21 @@ struct RecordingPreviewView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
+    }
+
+    private func saveQuickActionButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label {
+                Text("Save")
+            } icon: {
+                SaveIcon()
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .font(.system(size: 12))
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 
     private func quickActionButton(_ title: LocalizedStringKey, systemImage: String, action: @escaping () -> Void) -> some View {

@@ -233,7 +233,7 @@ struct QuickAccessView: View {
     private var toolbar: some View {
         HStack(spacing: 2) {
             toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-            toolButton(.save, icon: "arrow.down.doc", isPrimary: true, action: onSave)
+            saveToolButton(action: onSave)
             toolButton(.share, icon: "square.and.arrow.up", action: onShare)
             toolButton(.delete, icon: "trash", action: onDelete)
             if shareCoordinator != nil {
@@ -315,6 +315,31 @@ struct QuickAccessView: View {
             visualState = .failed(err)
         } catch {
             visualState = .failed(.unknown(error.localizedDescription))
+        }
+    }
+
+    @ViewBuilder
+    private func saveToolButton(action: @escaping () -> Void) -> some View {
+        let button = Button(action: action) {
+            SaveIcon()
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(toolForeground(.save, isPrimary: true))
+                .frame(width: 29, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(toolBackground(.save, isPrimary: true))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveredAction = $0 ? .save : nil }
+        .help(Text(label(.save)))
+        .accessibilityLabel(Text(label(.save)))
+        .accessibilityHint(Text(hintForAccessibility(.save)))
+
+        if let shortcut = shortcut(for: .save) {
+            button.keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
+        } else {
+            button
         }
     }
 

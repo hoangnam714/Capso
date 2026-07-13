@@ -323,14 +323,16 @@ public struct FreehandRecord: Codable, Sendable {
     public var type: String = "freehand"
     public var style: StrokeStyle
     public var points: [CodablePoint]
+    public var penStyle: PenStyle = .pen
 
     public init(_ object: FreehandObject) {
         self.style = object.style
         self.points = object.points.map(CodablePoint.init)
+        self.penStyle = object.penStyle
     }
 
     public func makeObject() -> FreehandObject {
-        FreehandObject(points: points.map(\.cgPoint), style: style)
+        FreehandObject(points: points.map(\.cgPoint), penStyle: penStyle, style: style)
     }
 }
 

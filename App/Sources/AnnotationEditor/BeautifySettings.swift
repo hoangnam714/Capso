@@ -28,9 +28,11 @@ struct BeautifySettings {
     var shadowEnabled = true
     var shadowRadius: CGFloat = 20
 
-    var clampedPadding: CGFloat { max(0, padding) }
-    var clampedCornerRadius: CGFloat { max(0, cornerRadius) }
-    var clampedShadowRadius: CGFloat { shadowEnabled ? max(0, shadowRadius) : 0 }
-    var shadowInset: CGFloat { shadowEnabled ? clampedShadowRadius + 6 : 0 }
-    var outerInset: CGFloat { clampedPadding + shadowInset }
+    var clampedPadding: CGFloat { isEnabled ? max(0, padding) : 0 }
+    var clampedCornerRadius: CGFloat { isEnabled ? max(0, cornerRadius) : 0 }
+    var clampedShadowRadius: CGFloat {
+        isEnabled && shadowEnabled ? max(0, shadowRadius) : 0
+    }
+    var shadowInset: CGFloat { clampedShadowRadius > 0 ? clampedShadowRadius + 6 : 0 }
+    var outerInset: CGFloat { isEnabled ? clampedPadding + shadowInset : 0 }
 }

@@ -387,6 +387,7 @@ final class AllInOneAnnotationSession: ObservableObject {
     @Published var textItalicEnabled: Bool
     @Published var textUnderlineEnabled: Bool
     @Published var textAlignment: AnnotationTextAlignment
+    @Published var penStyle: PenStyle
     @Published var lineWidth: CGFloat
     @Published var strokePattern: StrokePattern
     @Published var redactionMode: RedactionMode
@@ -420,6 +421,7 @@ final class AllInOneAnnotationSession: ObservableObject {
         self.textItalicEnabled = UserDefaults.standard.bool(forKey: "annotationTextItalicEnabled")
         self.textUnderlineEnabled = UserDefaults.standard.bool(forKey: "annotationTextUnderlineEnabled")
         self.textAlignment = Self.storedTextAlignment()
+        self.penStyle = Self.storedPenStyle()
         self.lineWidth = Self.storedWidth(for: Self.storedTool())
         self.strokePattern = Self.storedStrokePattern()
         self.redactionMode = Self.storedRedactionMode()
@@ -518,6 +520,9 @@ final class AllInOneAnnotationSession: ObservableObject {
                 text.isUnderline = textUnderlineEnabled
                 text.alignment = textAlignment
                 text.style = currentStyle
+            } else if let freehand = obj as? FreehandObject {
+                freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
+                freehand.style = currentStyle
             } else {
                 obj.style = currentStyle
             }
@@ -618,6 +623,14 @@ final class AllInOneAnnotationSession: ObservableObject {
         return .left
     }
 
+    private static func storedPenStyle() -> PenStyle {
+        if let raw = UserDefaults.standard.string(forKey: "annotationPenStyle"),
+           let style = PenStyle(rawValue: raw) {
+            return style
+        }
+        return .pen
+    }
+
     private static func storedTextFontSize() -> CGFloat {
         CGFloat(UserDefaults.standard.object(forKey: "annotationTextFontSize") as? Double ?? 48)
     }
@@ -656,6 +669,7 @@ private struct AllInOneAnnotationCanvasView: View {
             textItalic: session.textItalicEnabled,
             textUnderline: session.textUnderlineEnabled,
             textAlignment: session.textAlignment,
+            penStyle: session.penStyle,
             zoomScale: session.displayScale,
             refreshTrigger: session.refreshTrigger,
             textRegions: session.textRegions,
@@ -871,7 +885,16 @@ private struct AllInOneAnnotationToolbarView: View {
 
     private var primaryControls: some View {
         HStack(spacing: 7) {
-            if !(session.currentTool == .pixelate && session.redactionMode == .solid) {
+            if isFontSizeMode {
+                FontSizeControl(size: Binding(
+                    get: { session.lineWidth },
+                    set: {
+                        session.lineWidth = $0
+                        session.persistWidth($0, for: .text)
+                        session.updateSelectedStyle()
+                    }
+                ))
+            } else if !(session.currentTool == .pixelate && session.redactionMode == .solid) {
                 Slider(value: Binding(
                     get: { session.lineWidth },
                     set: {
@@ -888,8 +911,26 @@ private struct AllInOneAnnotationToolbarView: View {
                 redactionModeControl
             }
 
-            if session.currentTool == .arrow || session.currentTool == .line {
-                strokePatternControl
+            if showsStrokePatternPicker {
+                StrokePatternPicker(pattern: Binding(
+                    get: { session.strokePattern },
+                    set: {
+                        session.strokePattern = $0
+                        UserDefaults.standard.set($0.rawValue, forKey: "annotationStrokePattern")
+                        session.updateSelectedStyle()
+                    }
+                ), emphasizesOnDark: true)
+            }
+
+            if session.currentTool == .freehand {
+                PenStylePicker(penStyle: Binding(
+                    get: { session.penStyle },
+                    set: {
+                        session.penStyle = $0
+                        UserDefaults.standard.set($0.rawValue, forKey: "annotationPenStyle")
+                        session.updateSelectedStyle()
+                    }
+                ))
             }
 
             if isFontSizeMode && !session.usesCompactToolbar {
@@ -900,6 +941,7 @@ private struct AllInOneAnnotationToolbarView: View {
                 && session.currentTool != .arrow
                 && session.currentTool != .line
                 && session.currentTool != .highlighter
+                && session.currentTool != .freehand
                 && session.currentTool != .pixelate
                 && !isFontSizeMode {
                 iconButton(
@@ -913,6 +955,17 @@ private struct AllInOneAnnotationToolbarView: View {
                     }
                 )
             }
+        }
+    }
+
+    private var showsStrokePatternPicker: Bool {
+        switch session.currentTool {
+        case .arrow, .line:
+            return true
+        case .rectangle, .ellipse:
+            return !session.filled
+        default:
+            return false
         }
     }
 
@@ -1358,7 +1411,7 @@ private struct AllInOneAnnotationToolbarView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .help(Text(pattern.rawValue.capitalized))
+                .help(Text(pattern.label))
             }
         }
         .padding(2)

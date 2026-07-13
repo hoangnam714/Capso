@@ -7,6 +7,7 @@ import AnnotationKit
 final class AnnotationEditorWindow: NSPanel {
     private let document: AnnotationDocument
     private let interactionState = AnnotationEditorInteractionState()
+    private let targetFrame: NSRect
 
     init(
         image: CGImage,
@@ -30,22 +31,25 @@ final class AnnotationEditorWindow: NSPanel {
         // focused on). Falling back to NSScreen.main unconditionally would
         // always open the editor on the primary display, even when the capture
         // came from a secondary one.
-        let screen = anchorScreen ?? NSScreen.main ?? NSScreen.screens.first!
+        let mouseScreen = NSScreen.screens.first {
+            $0.frame.contains(NSEvent.mouseLocation)
+        }
+        let screen = anchorScreen ?? mouseScreen ?? NSScreen.main ?? NSScreen.screens.first!
         let maxW = screen.visibleFrame.width * 0.8
         let maxH = screen.visibleFrame.height * 0.8
         let chromeH: CGFloat = 110
 
-        let scale = min(1.0, min(maxW / imgW, (maxH - chromeH) / imgH))
-        let winW = imgW * scale
-        let winH = imgH * scale + chromeH
+        let scale = min(1.0, min(maxW / max(imgW, 1), (maxH - chromeH) / max(imgH, 1)))
+        let winW = max(imgW * scale, 480)
+        let winH = max(imgH * scale + chromeH, 360)
 
         // Center inside the target screen's visibleFrame. `visibleFrame` is
         // already in absolute desktop coordinates, so this puts the window on
         // the correct display even when that display isn't the primary one.
         let x = screen.visibleFrame.midX - winW / 2
         let y = screen.visibleFrame.midY - winH / 2
-
         let targetFrame = NSRect(x: x, y: y, width: winW, height: winH)
+        self.targetFrame = targetFrame
 
         super.init(
             contentRect: targetFrame,
@@ -98,12 +102,21 @@ final class AnnotationEditorWindow: NSPanel {
         )
 
         self.contentView = NSHostingView(rootView: view)
+        // Hosting-view layout can nudge the frame after contentView is set —
+        // re-apply centering once more so the panel stays on the target screen.
+        self.setFrame(targetFrame, display: false)
     }
 
     func show() {
+        setFrame(targetFrame, display: true)
         orderFrontRegardless()
         makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // One more pass after AppKit finishes ordering/layout.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.setFrame(self.targetFrame, display: true)
+        }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

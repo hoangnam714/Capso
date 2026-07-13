@@ -202,6 +202,90 @@ public enum ScreenCaptureManager {
             displayID: displayID
         )
     }
+
+    /// Capture one or more display-local regions and stitch them into a single
+    /// image covering `selectionSize` (AppKit points). Used for area selections
+    /// that span differently sized / scaled monitors.
+    public static func captureMultiDisplayArea(
+        targets: [DisplayAreaCaptureTarget],
+        selectionSize: CGSize,
+        showsCursor: Bool = false
+    ) async throws -> CaptureResult {
+        guard let primary = targets.first else {
+            throw CaptureError.captureFailed("No display regions to capture")
+        }
+
+        if targets.count == 1 {
+            return try await captureArea(
+                rect: primary.sourceRect,
+                displayID: primary.displayID,
+                showsCursor: showsCursor
+            )
+        }
+
+        var slices: [MultiDisplayCaptureSlice] = []
+        slices.reserveCapacity(targets.count)
+
+        for target in targets {
+            let result = try await captureArea(
+                rect: target.sourceRect,
+                displayID: target.displayID,
+                showsCursor: showsCursor
+            )
+            let scale: CGFloat
+            if target.sizeInPoints.width > 0 {
+                scale = CGFloat(result.image.width) / target.sizeInPoints.width
+            } else {
+                scale = 1
+            }
+            slices.append(
+                MultiDisplayCaptureSlice(
+                    image: result.image,
+                    originInSelection: target.originInSelection,
+                    sizeInPoints: target.sizeInPoints,
+                    scale: scale
+                )
+            )
+        }
+
+        let outputScale = slices.map(\.scale).max() ?? 1
+        guard let stitched = MultiDisplayImageStitcher.stitch(
+            slices: slices,
+            selectionSize: selectionSize,
+            outputScale: outputScale
+        ) else {
+            throw CaptureError.captureFailed("Failed to stitch multi-display capture")
+        }
+
+        return CaptureResult(
+            image: stitched,
+            mode: .area,
+            captureRect: CGRect(origin: .zero, size: selectionSize),
+            displayID: primary.displayID
+        )
+    }
+}
+
+/// A display-local crop to include in a cross-monitor area capture.
+public struct DisplayAreaCaptureTarget: Sendable {
+    public let displayID: CGDirectDisplayID
+    /// ScreenCaptureKit `sourceRect` in display-local top-left coordinates.
+    public let sourceRect: CGRect
+    /// Placement of this crop inside the global selection (AppKit points).
+    public let originInSelection: CGPoint
+    public let sizeInPoints: CGSize
+
+    public init(
+        displayID: CGDirectDisplayID,
+        sourceRect: CGRect,
+        originInSelection: CGPoint,
+        sizeInPoints: CGSize
+    ) {
+        self.displayID = displayID
+        self.sourceRect = sourceRect
+        self.originInSelection = originInSelection
+        self.sizeInPoints = sizeInPoints
+    }
 }
 
 // MARK: - Errors

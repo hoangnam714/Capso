@@ -97,4 +97,118 @@ struct CaptureDisplayGeometryTests {
 
         #expect(rect == CGRect(x: 0, y: 10, width: 80, height: 80))
     }
+
+    @Test("Normalizes a drag defined by two global points")
+    func normalizedRectFromPoints() {
+        let rect = CaptureDisplayGeometry.normalizedRect(
+            from: CGPoint(x: 500, y: 400),
+            to: CGPoint(x: 100, y: 200)
+        )
+        #expect(rect == CGRect(x: 100, y: 200, width: 400, height: 200))
+    }
+
+    @Test("Converts between global AppKit and screen-local rects")
+    func globalAndScreenLocalConversion() {
+        let screenFrame = CGRect(x: 1440, y: -200, width: 1920, height: 1080)
+        let local = CGRect(x: 100, y: 50, width: 300, height: 200)
+        let global = CaptureDisplayGeometry.globalAppKitRect(
+            fromScreenLocalRect: local,
+            screenFrame: screenFrame
+        )
+        #expect(global == CGRect(x: 1540, y: -150, width: 300, height: 200))
+        #expect(
+            CaptureDisplayGeometry.screenLocalRect(
+                fromGlobalAppKitRect: global,
+                screenFrame: screenFrame
+            ) == local
+        )
+    }
+
+    @Test("Intersects a cross-display selection with one screen")
+    func intersectingScreenLocalRectAcrossDisplays() {
+        let left = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let right = CGRect(x: 1440, y: -90, width: 1920, height: 1080)
+        let selection = CGRect(x: 1200, y: 100, width: 500, height: 300)
+
+        let leftLocal = CaptureDisplayGeometry.intersectingScreenLocalRect(
+            globalAppKitRect: selection,
+            screenFrame: left
+        )
+        let rightLocal = CaptureDisplayGeometry.intersectingScreenLocalRect(
+            globalAppKitRect: selection,
+            screenFrame: right
+        )
+
+        #expect(leftLocal == CGRect(x: 1200, y: 100, width: 240, height: 300))
+        #expect(rightLocal == CGRect(x: 0, y: 190, width: 260, height: 300))
+    }
+
+    @Test("Flips screen-local bottom-left rect to display top-left")
+    func displayTopLeftFromScreenLocal() {
+        let rect = CaptureDisplayGeometry.displayTopLeftRect(
+            fromScreenLocalRect: CGRect(x: 120, y: 180, width: 320, height: 160),
+            screenHeight: 900
+        )
+        #expect(rect == CGRect(x: 120, y: 560, width: 320, height: 160))
+    }
+
+    @Test("Unions screen frames into a virtual desktop bounds")
+    func virtualDesktopBoundsUnion() {
+        let bounds = CaptureDisplayGeometry.virtualDesktopBounds(
+            screenFrames: [
+                CGRect(x: 0, y: 0, width: 1440, height: 900),
+                CGRect(x: 1440, y: -90, width: 1920, height: 1080),
+            ]
+        )
+        #expect(bounds == CGRect(x: 0, y: -90, width: 3360, height: 1080))
+    }
+
+    @Test("Stitches differently scaled display crops into one canvas")
+    func stitchMultiDisplaySlices() {
+        let left = makeSolidImage(width: 200, height: 100, red: 1, green: 0, blue: 0)!
+        let right = makeSolidImage(width: 100, height: 50, red: 0, green: 0, blue: 1)!
+
+        let stitched = MultiDisplayImageStitcher.stitch(
+            slices: [
+                MultiDisplayCaptureSlice(
+                    image: left,
+                    originInSelection: .zero,
+                    sizeInPoints: CGSize(width: 100, height: 50),
+                    scale: 2
+                ),
+                MultiDisplayCaptureSlice(
+                    image: right,
+                    originInSelection: CGPoint(x: 100, y: 0),
+                    sizeInPoints: CGSize(width: 100, height: 50),
+                    scale: 1
+                ),
+            ],
+            selectionSize: CGSize(width: 200, height: 50),
+            outputScale: 2
+        )
+
+        #expect(stitched?.width == 400)
+        #expect(stitched?.height == 100)
+    }
+
+    private func makeSolidImage(
+        width: Int,
+        height: Int,
+        red: CGFloat,
+        green: CGFloat,
+        blue: CGFloat
+    ) -> CGImage? {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+        context?.setFillColor(red: red, green: green, blue: blue, alpha: 1)
+        context?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context?.makeImage()
+    }
 }

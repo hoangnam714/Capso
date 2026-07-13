@@ -1,4 +1,3 @@
-// Packages/AnnotationKit/Sources/AnnotationKit/Objects/EllipseObject.swift
 import Foundation
 import CoreGraphics
 
@@ -28,15 +27,22 @@ public final class EllipseObject: AnnotationObject, @unchecked Sendable {
         ctx.saveGState()
         ctx.setAlpha(style.opacity)
         if style.filled {
-            ctx.setFillColor(style.color.cgColor); ctx.fillEllipse(in: rect)
+            ctx.setFillColor(style.color.cgColor)
+            ctx.fillEllipse(in: rect)
         } else {
-            ctx.setStrokeColor(style.color.cgColor); ctx.setLineWidth(style.lineWidth); ctx.strokeEllipse(in: rect)
+            ctx.setStrokeColor(style.color.cgColor)
+            ctx.setLineWidth(style.lineWidth)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            style.pattern.apply(to: ctx, lineWidth: style.lineWidth)
+            ctx.strokeEllipse(in: rect)
         }
         ctx.restoreGState()
     }
 
     public func move(by delta: CGSize) {
-        rect.origin.x += delta.width; rect.origin.y += delta.height
+        rect.origin.x += delta.width
+        rect.origin.y += delta.height
     }
 
     public func copy() -> any AnnotationObject {

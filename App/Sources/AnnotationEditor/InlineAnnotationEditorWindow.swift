@@ -157,6 +157,7 @@ private struct InlineAnnotationEditorView: View {
     @AppStorage("annotationTextItalicEnabled") private var textItalicEnabled: Bool = false
     @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
     @AppStorage("annotationTextAlignment") private var textAlignment: AnnotationTextAlignment = .left
+    @AppStorage("annotationPenStyle") private var penStyle: PenStyle = .pen
 
     @State private var lineWidth: CGFloat = 3
     @State private var strokePattern: StrokePattern = .solid
@@ -255,6 +256,7 @@ private struct InlineAnnotationEditorView: View {
         .onChange(of: textItalicEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textAlignment) { _, _ in updateSelectedStyle() }
+        .onChange(of: penStyle) { _, _ in updateSelectedStyle() }
         .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
     }
 
@@ -278,6 +280,7 @@ private struct InlineAnnotationEditorView: View {
             textItalic: textItalicEnabled,
             textUnderline: textUnderlineEnabled,
             textAlignment: textAlignment,
+            penStyle: penStyle,
             zoomScale: displayScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -314,6 +317,7 @@ private struct InlineAnnotationEditorView: View {
             textUnderlineEnabled: $textUnderlineEnabled,
             textAlignment: $textAlignment,
             redactionMode: $redactionMode,
+            penStyle: $penStyle,
             isEditingText: isEditingText,
             canUndo: document.canUndo,
             canRedo: document.canRedo,
@@ -471,6 +475,9 @@ private struct InlineAnnotationEditorView: View {
                 text.isUnderline = textUnderlineEnabled
                 text.alignment = textAlignment
                 text.style = currentStyle
+            } else if let freehand = obj as? FreehandObject {
+                freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
+                freehand.style = currentStyle
             } else {
                 obj.style = currentStyle
             }
@@ -544,6 +551,7 @@ private struct InlineAnnotationToolbar: View {
     @Binding var textUnderlineEnabled: Bool
     @Binding var textAlignment: AnnotationTextAlignment
     @Binding var redactionMode: RedactionMode
+    @Binding var penStyle: PenStyle
 
     let isEditingText: Bool
     let canUndo: Bool
@@ -627,7 +635,9 @@ private struct InlineAnnotationToolbar: View {
 
     private var primaryControls: some View {
         HStack(spacing: 7) {
-            if !(currentTool == .pixelate && redactionMode == .solid) {
+            if isFontSizeMode {
+                FontSizeControl(size: $lineWidth)
+            } else if !(currentTool == .pixelate && redactionMode == .solid) {
                 Slider(value: $lineWidth, in: sliderRange, step: sliderStep)
                     .frame(width: 82)
                     .help(sliderHelp)
@@ -645,23 +655,19 @@ private struct InlineAnnotationToolbar: View {
                 .help("Redaction Mode")
             }
 
-            if currentTool == .arrow || currentTool == .line {
-                Picker("", selection: $strokePattern) {
-                    ForEach(StrokePattern.allCases, id: \.self) { pattern in
-                        StrokePatternGlyph(pattern: pattern)
-                            .tag(pattern)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 104)
-                .help("Stroke Pattern")
+            if showsStrokePatternPicker {
+                StrokePatternPicker(pattern: $strokePattern, emphasizesOnDark: true)
+            }
+
+            if currentTool == .freehand {
+                PenStylePicker(penStyle: $penStyle)
             }
 
             if currentTool != .counter
                 && currentTool != .arrow
                 && currentTool != .line
                 && currentTool != .highlighter
+                && currentTool != .freehand
                 && currentTool != .pixelate
                 && !isFontSizeMode {
                 iconButton(
@@ -671,6 +677,17 @@ private struct InlineAnnotationToolbar: View {
                     action: { filled.toggle() }
                 )
             }
+        }
+    }
+
+    private var showsStrokePatternPicker: Bool {
+        switch currentTool {
+        case .arrow, .line:
+            return true
+        case .rectangle, .ellipse:
+            return !filled
+        default:
+            return false
         }
     }
 
@@ -703,7 +720,7 @@ private struct InlineAnnotationToolbar: View {
                 .keyboardShortcut("i", modifiers: [.command, .shift])
             iconButton(systemName: "pin", help: "Pin to Screen", action: onPin)
                 .keyboardShortcut("p", modifiers: .command)
-            iconButton(systemName: "arrow.down.doc", help: "Save", isPrimary: true, action: onSave)
+            saveIconButton(help: "Save", isPrimary: true, action: onSave)
                 .keyboardShortcut("s", modifiers: .command)
         }
     }
@@ -824,6 +841,23 @@ private struct InlineAnnotationToolbar: View {
                 .foregroundStyle(.white)
                 .frame(width: 29, height: 28)
                 .background(Color.white.opacity(0.001))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private func saveIconButton(
+        help: LocalizedStringKey,
+        isPrimary: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            SaveIcon()
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 28)
+                .background(buttonBackground(isActive: false, isPrimary: isPrimary, isEnabled: true))
                 .clipShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)

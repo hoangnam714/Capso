@@ -92,7 +92,7 @@ struct HistoryItemView: View {
                             .help(String(localized: "Copy"))
                         actionButton("square.and.arrow.up") { coordinator.shareToApps(entry) }
                             .help(String(localized: "Share"))
-                        actionButton("arrow.down.doc") { coordinator.saveToFile(entry) }
+                        saveActionButton { coordinator.saveToFile(entry) }
                             .help(String(localized: "Save"))
                         cloudActionButton
                     }
@@ -282,6 +282,22 @@ struct HistoryItemView: View {
                         .foregroundStyle(.quaternary)
                 }
         }
+    }
+
+    private func saveActionButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            SaveIcon()
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func actionButton(_ systemImage: String, action: @escaping () -> Void) -> some View {

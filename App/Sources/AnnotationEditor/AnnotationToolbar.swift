@@ -18,6 +18,7 @@ struct AnnotationToolbar: View {
     @Binding var textAlignment: AnnotationTextAlignment
     @Binding var redactionMode: RedactionMode
     @Binding var showBeautifyPanel: Bool
+    @Binding var penStyle: PenStyle
     /// True when an inline text edit is active (either via the text tool or
     /// by double-clicking an existing TextObject in select mode). When set,
     /// the size slider behaves as a Font Size control regardless of the
@@ -173,10 +174,7 @@ struct AnnotationToolbar: View {
     private var strokeGroup: some View {
         HStack(spacing: 8) {
             if isFontSizeMode {
-                // Text tool, selected text, or mid-edit: font-size control.
-                Slider(value: $lineWidth, in: 12...120, step: 1)
-                    .frame(width: 80)
-                    .help("Font Size: \(Int(lineWidth))")
+                FontSizeControl(size: $lineWidth)
             } else if effectiveSizeTool == .pixelate {
                 Picker("", selection: $redactionMode) {
                     ForEach(RedactionMode.allCases, id: \.self) { mode in
@@ -206,23 +204,21 @@ struct AnnotationToolbar: View {
                     .frame(width: 80)
                     .help("Line Width: \(Int(lineWidth))")
             }
-            if effectiveSizeTool == .arrow || effectiveSizeTool == .line {
-                Picker("", selection: $strokePattern) {
-                    ForEach(StrokePattern.allCases, id: \.self) { pattern in
-                        StrokePatternGlyph(pattern: pattern)
-                            .tag(pattern)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 104)
-                .help("Stroke Pattern")
+
+            if showsStrokePatternPicker {
+                StrokePatternPicker(pattern: $strokePattern)
             }
-            // Fill toggle is meaningless for counter / highlighter / text.
+
+            if effectiveSizeTool == .freehand {
+                PenStylePicker(penStyle: $penStyle)
+            }
+
+            // Fill toggle is meaningless for counter / highlighter / text / freehand.
             if effectiveSizeTool != .counter
                 && effectiveSizeTool != .arrow
                 && effectiveSizeTool != .line
                 && effectiveSizeTool != .highlighter
+                && effectiveSizeTool != .freehand
                 && effectiveSizeTool != .select
                 && !isFontSizeMode {
                 Toggle(isOn: $filled) {
@@ -232,6 +228,15 @@ struct AnnotationToolbar: View {
                 .toggleStyle(.button)
                 .help("Fill Shape")
             }
+        }
+    }
+
+    private var showsStrokePatternPicker: Bool {
+        switch effectiveSizeTool {
+        case .arrow, .line, .rectangle, .ellipse:
+            return !filled || effectiveSizeTool == .arrow || effectiveSizeTool == .line
+        default:
+            return false
         }
     }
 
@@ -336,7 +341,7 @@ struct AnnotationToolbar: View {
             actionButton(icon: "pin", help: "Pin", action: onPin)
                 .keyboardShortcut("p", modifiers: .command)
 
-            actionButton(icon: "arrow.down.doc", help: "Save", isPrimary: true, action: onSave)
+            saveActionButton
                 .keyboardShortcut("s", modifiers: .command)
         }
     }
@@ -350,6 +355,20 @@ struct AnnotationToolbar: View {
         } else {
             button.keyboardShortcut(.return, modifiers: [])
         }
+    }
+
+    private var saveActionButton: some View {
+        Button(action: onSave) {
+            SaveIcon()
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(actionIconForeground(isPrimary: true, isDestructive: false))
+                .frame(width: 34, height: 26)
+                .background(actionButtonBackground(isPrimary: true, isDestructive: false))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(actionButtonStroke(isPrimary: true))
+        }
+        .buttonStyle(.plain)
+        .help("Save")
     }
 
     private func actionButton(
@@ -423,20 +442,25 @@ struct StrokePatternGlyph: View {
     var body: some View {
         Canvas { context, size in
             var path = Path()
-            path.move(to: CGPoint(x: 3, y: size.height / 2))
-            path.addLine(to: CGPoint(x: size.width - 3, y: size.height / 2))
+            let y = size.height / 2
+            path.move(to: CGPoint(x: 2, y: y))
+            path.addLine(to: CGPoint(x: size.width - 2, y: y))
 
             let style: SwiftUI.StrokeStyle
             switch pattern {
             case .solid:
-                style = SwiftUI.StrokeStyle(lineWidth: 2, lineCap: .round)
+                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round)
             case .dashed:
-                style = SwiftUI.StrokeStyle(lineWidth: 2, lineCap: .round, dash: [7, 5])
+                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [6, 4])
+            case .longDashed:
+                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [11, 5])
             case .dotted:
-                style = SwiftUI.StrokeStyle(lineWidth: 2.4, lineCap: .round, dash: [0, 5])
+                style = SwiftUI.StrokeStyle(lineWidth: 2.6, lineCap: .round, dash: [0.1, 4.5])
+            case .dashDot:
+                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [7, 3.5, 0.1, 3.5])
             }
-            context.stroke(path, with: .color(.primary), style: style)
+            context.stroke(path, with: .foreground, style: style)
         }
-        .frame(width: 22, height: 14)
+        .frame(width: 28, height: 14)
     }
 }

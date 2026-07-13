@@ -1,4 +1,3 @@
-// Packages/AnnotationKit/Sources/AnnotationKit/Objects/RectangleObject.swift
 import Foundation
 import CoreGraphics
 
@@ -35,17 +34,23 @@ public final class RectangleObject: AnnotationObject, @unchecked Sendable {
         }
         if style.filled {
             ctx.setFillColor(style.color.cgColor)
-            ctx.addPath(path); ctx.fillPath()
+            ctx.addPath(path)
+            ctx.fillPath()
         } else {
             ctx.setStrokeColor(style.color.cgColor)
             ctx.setLineWidth(style.lineWidth)
-            ctx.addPath(path); ctx.strokePath()
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            style.pattern.apply(to: ctx, lineWidth: style.lineWidth)
+            ctx.addPath(path)
+            ctx.strokePath()
         }
         ctx.restoreGState()
     }
 
     public func move(by delta: CGSize) {
-        rect.origin.x += delta.width; rect.origin.y += delta.height
+        rect.origin.x += delta.width
+        rect.origin.y += delta.height
     }
 
     public func copy() -> any AnnotationObject {

@@ -32,6 +32,8 @@ final class CaptureCoordinator {
     private var pinnedControllers: [PinnedScreenshotController] = []
     /// Opaque freeze-screen windows (one per display) that replace the live desktop
     private var freezeWindows: [NSWindow] = []
+    /// Frozen screenshots paired with the freeze windows, used for multi-display crops.
+    private var activeFrozenScreens: [(NSScreen, CGImage)] = []
     private var scrollCaptureController: ScrollCaptureController?
     private var scrollCaptureOverlay: ScrollCaptureOverlay?
     private var selfTimerHUD: SelfTimerHUD?
@@ -215,18 +217,21 @@ final class CaptureCoordinator {
     }
 
     func captureFullscreen() {
-        let session = beginCaptureSession("fullscreen")
-        rememberSourceApplication()
-        // Capture the display the user is currently looking at (the one
-        // containing the mouse cursor), not unconditionally the primary.
-        // For keyboard-shortcut invocations this matches where attention is;
-        // for menu-bar clicks the mouse is on the screen whose menu bar was
-        // clicked. Fall back to `NSScreen.main` then the primary CGDisplay
-        // so we never end up with no target at all.
         let mouseLocation = NSEvent.mouseLocation
         let targetScreen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
             ?? NSScreen.main
+            ?? NSScreen.screens.first
         let displayID = targetScreen?.displayID ?? CGMainDisplayID()
+        captureFullscreen(displayID: displayID, screen: targetScreen)
+    }
+
+    /// Captures a specific display. Used by the multi-monitor fullscreen submenu.
+    func captureFullscreen(displayID: CGDirectDisplayID, screen: NSScreen? = nil) {
+        let session = beginCaptureSession("fullscreen")
+        rememberSourceApplication()
+        let targetScreen = screen
+            ?? NSScreen.screens.first { $0.displayID == displayID }
+            ?? NSScreen.main
         settings.lastCaptureSelection = .fullscreen(screenID: displayID)
 
         // Freeze the display synchronously BEFORE any focus change so open
@@ -259,9 +264,78 @@ final class CaptureCoordinator {
                 handleCaptureResult(result)
             } catch {
                 guard self.isCurrentSession(session) else { return }
-                logCaptureFailure("Fullscreen capture failed", error: error)
+                logCaptureFailure("Fullscreen capture failed displayID=\(displayID)", error: error)
             }
         }
+    }
+
+    /// Captures every connected display as separate screenshots.
+    func captureAllDisplays() {
+        let screens = Self.uniqueScreens(from: NSScreen.screens)
+        guard !screens.isEmpty else {
+            captureFullscreen()
+            return
+        }
+
+        let session = beginCaptureSession("fullscreenAll")
+        rememberSourceApplication()
+
+        Task { @MainActor in
+            var results: [CaptureResult] = []
+            for screen in screens {
+                if let result = await self.captureFullscreenResult(for: screen) {
+                    results.append(result)
+                }
+            }
+            guard self.isCurrentSession(session) else { return }
+            for result in results {
+                self.handleCaptureResult(result)
+            }
+        }
+    }
+
+    /// Capture one display, preferring the synchronous CGDisplayCreateImage path
+    /// and falling back to ScreenCaptureKit when sync capture is unavailable.
+    private func captureFullscreenResult(for screen: NSScreen) async -> CaptureResult? {
+        let displayID = screen.displayID
+        if let image = Self.syncCaptureDisplay(displayID) {
+            let fullScreenRect = CGRect(origin: .zero, size: screen.frame.size)
+            let outputImage = cursorCompositedIfNeeded(
+                on: image,
+                selectionRect: fullScreenRect,
+                screen: screen
+            ) ?? image
+            return CaptureResult(
+                image: outputImage,
+                mode: .fullscreen,
+                captureRect: CGDisplayBounds(displayID),
+                displayID: displayID
+            )
+        }
+
+        do {
+            return try await ScreenCaptureManager.captureFullscreen(
+                displayID: displayID,
+                showsCursor: settings.screenshotShowsCursor
+            )
+        } catch {
+            logCaptureFailure("Fullscreen capture failed displayID=\(displayID)", error: error)
+            return nil
+        }
+    }
+
+    /// One entry per physical display. Mirrored or duplicate NSScreen entries
+    /// share a displayID and should only be captured once.
+    private static func uniqueScreens(from screens: [NSScreen]) -> [NSScreen] {
+        var seen = Set<CGDirectDisplayID>()
+        var unique: [NSScreen] = []
+        for screen in screens {
+            let id = screen.displayID
+            if seen.insert(id).inserted {
+                unique.append(screen)
+            }
+        }
+        return unique
     }
 
     func captureScrolling() {
@@ -379,7 +453,13 @@ final class CaptureCoordinator {
                     areaSelected(rect, screen)
                 } else if isAllInOne {
                     self?.settings.lastCaptureSelection = .area(rect: rect, screenID: screen.displayID)
-                    self?.showAllInOneToolbar(selectionRect: rect, screen: screen)
+                    if Self.selectionSpansMultipleDisplays(rect: rect, screen: screen) {
+                        // All-in-one chrome is still single-display; capture the
+                        // cross-monitor selection immediately.
+                        self?.performAreaCapture(rect: rect, screen: screen)
+                    } else {
+                        self?.showAllInOneToolbar(selectionRect: rect, screen: screen)
+                    }
                 } else if isScrollingCapture {
                     self?.startScrollingCapture(rect: rect, screen: screen)
                 } else if let seconds = selfTimerSeconds {
@@ -414,6 +494,7 @@ final class CaptureCoordinator {
         }
 
         showFreezeWindows(frozenScreens)
+        let frozenScreensForCapture = frozenScreens
         let frozenImagesByDisplayID = Dictionary(
             uniqueKeysWithValues: frozenScreens.map { ($0.0.displayID, $0.1) }
         )
@@ -424,6 +505,17 @@ final class CaptureCoordinator {
                 guard let self else { return }
                 self.dismissSelectionOverlays()
                 self.settings.lastCaptureSelection = .area(rect: rect, screenID: screen.displayID)
+                if Self.selectionSpansMultipleDisplays(rect: rect, screen: screen) {
+                    if let result = self.frozenAreaResult(
+                        rect: rect,
+                        anchorScreen: screen,
+                        frozenScreens: frozenScreensForCapture
+                    ) {
+                        self.handleCaptureResult(result)
+                    }
+                    self.dismissFreezeWindows()
+                    return
+                }
                 self.showAllInOneToolbar(
                     selectionRect: rect,
                     screen: screen,
@@ -682,7 +774,8 @@ final class CaptureCoordinator {
         showFreezeWindows(frozenScreens)
 
         // Step 2: Create transparent overlay windows (top layer) for selection
-        for (screen, frozenImage) in frozenScreens {
+        let frozenScreensForCapture = frozenScreens
+        for (screen, _) in frozenScreens {
             let overlay = CaptureOverlayWindow(screen: screen, settings: settings)
             overlay.onAreaSelected = { [weak self] rect, screen in
                 guard let self else { return }
@@ -690,7 +783,11 @@ final class CaptureCoordinator {
                 self.settings.lastCaptureSelection = .area(rect: rect, screenID: screen.displayID)
                 if let areaSelected {
                     areaSelected(rect, screen)
-                } else if let result = self.frozenAreaResult(rect: rect, screen: screen, frozenImage: frozenImage) {
+                } else if let result = self.frozenAreaResult(
+                    rect: rect,
+                    anchorScreen: screen,
+                    frozenScreens: frozenScreensForCapture
+                ) {
                     self.handleCaptureResult(result)
                 }
             }
@@ -715,6 +812,7 @@ final class CaptureCoordinator {
     }
 
     private func showFreezeWindows(_ frozenScreens: [(NSScreen, CGImage)]) {
+        activeFrozenScreens = frozenScreens
         for (screen, frozenImage) in frozenScreens {
             let freezeWin = NSWindow(
                 contentRect: screen.frame,
@@ -913,6 +1011,7 @@ final class CaptureCoordinator {
     private func dismissFreezeWindows() {
         let windows = freezeWindows
         freezeWindows.removeAll()
+        activeFrozenScreens = []
         if windows.isEmpty { return }
 
         NSAnimationContext.runAnimationGroup { ctx in
@@ -1037,21 +1136,21 @@ final class CaptureCoordinator {
 
     private func performAreaCapture(rect: CGRect, screen: NSScreen) {
         let session = captureSessionID
+        let globalRect = CaptureDisplayGeometry.globalAppKitRect(
+            fromScreenLocalRect: rect,
+            screenFrame: screen.frame
+        )
+        let targets = Self.displayAreaTargets(forGlobalAppKitRect: globalRect)
+        guard !targets.isEmpty else {
+            logCaptureFailure("Area capture failed", error: CaptureError.captureFailed("Selection does not intersect any display"))
+            return
+        }
+
         Task {
             do {
-                let screenFrame = screen.frame
-                // rect is already in view-local coords (0..screenWidth, 0..screenHeight, bottom-left origin)
-                // Only flip Y for ScreenCaptureKit (top-left origin)
-                let screenRect = CGRect(
-                    x: rect.origin.x,
-                    y: screenFrame.height - rect.origin.y - rect.height,
-                    width: rect.width,
-                    height: rect.height
-                )
-                let displayID = screen.displayID
-                let result = try await ScreenCaptureManager.captureArea(
-                    rect: screenRect,
-                    displayID: displayID,
+                let result = try await ScreenCaptureManager.captureMultiDisplayArea(
+                    targets: targets,
+                    selectionSize: globalRect.size,
                     showsCursor: settings.screenshotShowsCursor
                 )
                 guard self.isCurrentSession(session) else { return }
@@ -1069,8 +1168,20 @@ final class CaptureCoordinator {
         frozenImage: CGImage?,
         action: PostCaptureAction
     ) -> Bool {
-        guard let frozenImage,
-              let result = frozenAreaResult(rect: rect, screen: screen, frozenImage: frozenImage) else {
+        let sources: [(NSScreen, CGImage)]
+        if !activeFrozenScreens.isEmpty {
+            sources = activeFrozenScreens
+        } else if let frozenImage {
+            sources = [(screen, frozenImage)]
+        } else {
+            return false
+        }
+
+        guard let result = frozenAreaResult(
+            rect: rect,
+            anchorScreen: screen,
+            frozenScreens: sources
+        ) else {
             return false
         }
 
@@ -1084,37 +1195,128 @@ final class CaptureCoordinator {
 
     private func frozenAreaResult(
         rect: CGRect,
-        screen: NSScreen,
-        frozenImage: CGImage
+        anchorScreen: NSScreen,
+        frozenScreens: [(NSScreen, CGImage)]
     ) -> CaptureResult? {
-        let cropRect = CaptureDisplayGeometry.frozenImageCropRect(
-            screenLocalRect: rect,
-            screenSize: screen.frame.size,
-            imageSize: CGSize(width: frozenImage.width, height: frozenImage.height)
+        let globalRect = CaptureDisplayGeometry.globalAppKitRect(
+            fromScreenLocalRect: rect,
+            screenFrame: anchorScreen.frame
         )
-        guard !cropRect.isEmpty,
-              let cropped = frozenImage.cropping(to: cropRect) else {
+
+        var slices: [MultiDisplayCaptureSlice] = []
+        for (screen, frozenImage) in frozenScreens {
+            guard let local = CaptureDisplayGeometry.intersectingScreenLocalRect(
+                globalAppKitRect: globalRect,
+                screenFrame: screen.frame
+            ) else {
+                continue
+            }
+
+            let cropRect = CaptureDisplayGeometry.frozenImageCropRect(
+                screenLocalRect: local,
+                screenSize: screen.frame.size,
+                imageSize: CGSize(width: frozenImage.width, height: frozenImage.height)
+            )
+            guard !cropRect.isEmpty,
+                  let cropped = frozenImage.cropping(to: cropRect) else {
+                continue
+            }
+
+            let scale: CGFloat
+            if local.width > 0 {
+                scale = CGFloat(cropped.width) / local.width
+            } else {
+                scale = 1
+            }
+
+            let originInSelection = CGPoint(
+                x: (local.minX + screen.frame.minX) - globalRect.minX,
+                y: (local.minY + screen.frame.minY) - globalRect.minY
+            )
+
+            let image = cursorCompositedIfNeeded(
+                on: cropped,
+                selectionRect: local,
+                screen: screen
+            ) ?? cropped
+
+            slices.append(
+                MultiDisplayCaptureSlice(
+                    image: image,
+                    originInSelection: originInSelection,
+                    sizeInPoints: local.size,
+                    scale: scale
+                )
+            )
+        }
+
+        guard !slices.isEmpty else { return nil }
+
+        let outputScale = slices.map(\.scale).max() ?? 1
+        guard let stitched = MultiDisplayImageStitcher.stitch(
+            slices: slices,
+            selectionSize: globalRect.size,
+            outputScale: outputScale
+        ) else {
             return nil
         }
 
-        let captureRect = CGRect(
-            x: rect.origin.x,
-            y: screen.frame.height - rect.origin.y - rect.height,
-            width: rect.width,
-            height: rect.height
+        let captureRect = CaptureDisplayGeometry.displayTopLeftRect(
+            fromScreenLocalRect: rect,
+            screenHeight: anchorScreen.frame.height
         )
-        let image = cursorCompositedIfNeeded(
-            on: cropped,
-            selectionRect: rect,
-            screen: screen
-        ) ?? cropped
 
         return CaptureResult(
-            image: image,
+            image: stitched,
             mode: .area,
             captureRect: captureRect,
-            displayID: screen.displayID
+            displayID: anchorScreen.displayID
         )
+    }
+
+    /// Build ScreenCaptureKit targets for every display that intersects a
+    /// global AppKit selection rectangle.
+    private static func displayAreaTargets(
+        forGlobalAppKitRect globalRect: CGRect
+    ) -> [DisplayAreaCaptureTarget] {
+        uniqueScreens(from: NSScreen.screens).compactMap { screen in
+            guard let local = CaptureDisplayGeometry.intersectingScreenLocalRect(
+                globalAppKitRect: globalRect,
+                screenFrame: screen.frame
+            ), local.width > 0.5, local.height > 0.5 else {
+                return nil
+            }
+
+            let sourceRect = CaptureDisplayGeometry.displayTopLeftRect(
+                fromScreenLocalRect: local,
+                screenHeight: screen.frame.height
+            )
+            return DisplayAreaCaptureTarget(
+                displayID: screen.displayID,
+                sourceRect: sourceRect,
+                originInSelection: CGPoint(
+                    x: (local.minX + screen.frame.minX) - globalRect.minX,
+                    y: (local.minY + screen.frame.minY) - globalRect.minY
+                ),
+                sizeInPoints: local.size
+            )
+        }
+    }
+
+    /// Whether a screen-local selection (relative to `screen`) intersects more
+    /// than one connected display — including differently sized monitors.
+    private static func selectionSpansMultipleDisplays(rect: CGRect, screen: NSScreen) -> Bool {
+        let globalRect = CaptureDisplayGeometry.globalAppKitRect(
+            fromScreenLocalRect: rect,
+            screenFrame: screen.frame
+        )
+        let hitCount = uniqueScreens(from: NSScreen.screens).filter { candidate in
+            CaptureDisplayGeometry.intersectingScreenLocalRect(
+                globalAppKitRect: globalRect,
+                screenFrame: candidate.frame
+            ) != nil
+        }.count
+        return hitCount > 1
     }
 
     private func cursorCompositedIfNeeded(
@@ -1302,7 +1504,7 @@ final class CaptureCoordinator {
             oldest.slideOffLeftAndClose()
         }
 
-        let captureScreen = NSScreen.screens.first { $0.displayID == result.displayID }
+        let captureScreen = screenFor(result: result) ?? screenAtMouse()
         let window = QuickAccessWindow(result: result, settings: settings, screen: captureScreen, shareCoordinator: shareCoordinator)
 
         // Persist the cloud URL to history when an upload succeeds from Quick Access.
@@ -1489,7 +1691,7 @@ final class CaptureCoordinator {
         sidecar: AnnotationSidecar? = nil,
         historyEntryID: UUID? = nil
     ) {
-        let screen = anchorScreen ?? NSScreen.main
+        let screen = anchorScreen ?? screenAtMouse() ?? NSScreen.main
         activeAnnotationHistoryEntryID = historyEntryID
 
         inlineAnnotationWindow?.close()
@@ -1653,11 +1855,31 @@ final class CaptureCoordinator {
         return true
     }
 
-    /// Look up the NSScreen whose displayID matches the capture. Returns nil
-    /// if the originating display is no longer connected (rare — user
-    /// unplugged the monitor between capture and action).
+    /// Look up the NSScreen whose displayID matches the capture. Falls back to
+    /// geometry overlap and the current mouse screen when the display ID does
+    /// not resolve (e.g. ScreenCaptureKit vs NSScreen mismatch).
     private func screenFor(result: CaptureResult) -> NSScreen? {
-        NSScreen.screens.first { $0.displayID == result.displayID }
+        if let screen = NSScreen.screens.first(where: { $0.displayID == result.displayID }) {
+            return screen
+        }
+
+        let captureRect = result.captureRect.standardized
+        if !captureRect.isEmpty {
+            for screen in NSScreen.screens {
+                let displayBounds = CGDisplayBounds(screen.displayID)
+                if displayBounds.equalTo(captureRect)
+                    || displayBounds.intersects(captureRect) {
+                    return screen
+                }
+            }
+        }
+
+        return screenAtMouse()
+    }
+
+    private func screenAtMouse() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(mouseLocation) }
     }
 
     private func anchorRect(for result: CaptureResult) -> CGRect {

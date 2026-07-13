@@ -27,9 +27,10 @@ struct AnnotationObjectTests {
         let dashed = StrokeStyle(pattern: .dashed)
         let dotted = StrokeStyle(pattern: .dotted)
 
-        #expect(StrokePattern.allCases == [.solid, .dashed, .dotted])
+        #expect(StrokePattern.allCases == [.solid, .dashed, .longDashed, .dotted, .dashDot])
         #expect(dashed.pattern == .dashed)
         #expect(dotted.pattern == .dotted)
+        #expect(PenStyle.allCases == [.pen, .marker, .pencil])
     }
 
     @Test("AnnotationColor keeps preset raw values")

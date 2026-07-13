@@ -29,7 +29,19 @@ public struct ObjectID: Hashable, Sendable {
 public enum StrokePattern: String, Codable, CaseIterable, Sendable {
     case solid
     case dashed
+    case longDashed
     case dotted
+    case dashDot
+
+    public var label: String {
+        switch self {
+        case .solid: String(localized: "Solid")
+        case .dashed: String(localized: "Dashed")
+        case .longDashed: String(localized: "Long Dash")
+        case .dotted: String(localized: "Dotted")
+        case .dashDot: String(localized: "Dash Dot")
+        }
+    }
 
     public func apply(to context: CGContext, lineWidth: CGFloat) {
         switch self {
@@ -37,8 +49,60 @@ public enum StrokePattern: String, Codable, CaseIterable, Sendable {
             context.setLineDash(phase: 0, lengths: [])
         case .dashed:
             context.setLineDash(phase: 0, lengths: [lineWidth * 3, lineWidth * 2])
+        case .longDashed:
+            context.setLineDash(phase: 0, lengths: [lineWidth * 8, lineWidth * 3])
         case .dotted:
             context.setLineDash(phase: 0, lengths: [0, max(lineWidth * 2, 6)])
+        case .dashDot:
+            context.setLineDash(
+                phase: 0,
+                lengths: [lineWidth * 4, lineWidth * 1.8, 0, lineWidth * 1.8]
+            )
+        }
+    }
+}
+
+public enum PenStyle: String, Codable, CaseIterable, Sendable {
+    case pen
+    case marker
+    case pencil
+
+    public var label: String {
+        switch self {
+        case .pen: String(localized: "Pen")
+        case .marker: String(localized: "Marker")
+        case .pencil: String(localized: "Pencil")
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .pen: "pencil.tip"
+        case .marker: "paintbrush.pointed"
+        case .pencil: "pencil"
+        }
+    }
+
+    public var usesSmoothing: Bool {
+        switch self {
+        case .pen, .marker: true
+        case .pencil: false
+        }
+    }
+
+    public var blendMode: CGBlendMode {
+        switch self {
+        case .pen: .normal
+        case .marker: .multiply
+        case .pencil: .normal
+        }
+    }
+
+    public var opacityMultiplier: CGFloat {
+        switch self {
+        case .pen: 1
+        case .marker: 0.72
+        case .pencil: 0.78
         }
     }
 }

@@ -108,18 +108,34 @@ private struct QuickAccessPreviewView: View {
 
                 Spacer()
 
-                previewActionButton(
-                    title: String(localized: "Save"),
-                    systemImage: "arrow.down.doc",
-                    isPrimary: true,
-                    action: onSave
-                )
+                previewSaveButton(action: onSave)
                 .keyboardShortcut("s", modifiers: .command)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(.bar)
         }
+    }
+
+    private func previewSaveButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label {
+                Text(String(localized: "Save"))
+            } icon: {
+                SaveIcon()
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(buttonFill(isPrimary: true, isDestructive: false))
+            )
+            .foregroundStyle(buttonForeground(isPrimary: true, isDestructive: false))
+        }
+        .buttonStyle(.plain)
+        .help(String(localized: "Save"))
     }
 
     private func previewActionButton(

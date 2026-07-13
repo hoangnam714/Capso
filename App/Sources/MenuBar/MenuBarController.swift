@@ -1,5 +1,6 @@
 // App/Sources/MenuBar/MenuBarController.swift
 import AppKit
+import CoreGraphics
 import SharedKit
 import KeyboardShortcuts
 
@@ -81,9 +82,7 @@ final class MenuBarController: NSObject {
         captureArea.setShortcut(for: .captureArea)
         menu.addItem(captureArea)
 
-        let captureFullscreen = menuItem(String(localized: "Capture Fullscreen"), action: #selector(captureFullscreen))
-        captureFullscreen.setShortcut(for: .captureFullscreen)
-        menu.addItem(captureFullscreen)
+        menu.addItem(fullscreenMenuItem())
 
         let captureWindow = menuItem(String(localized: "Capture Window"), action: #selector(captureWindow))
         captureWindow.setShortcut(for: .captureWindow)
@@ -169,6 +168,44 @@ final class MenuBarController: NSObject {
         item.attributedTitle = attributed
     }
 
+    private func fullscreenMenuItem() -> NSMenuItem {
+        let screens = NSScreen.screens
+        guard screens.count > 1 else {
+            let item = menuItem(String(localized: "Capture Fullscreen"), action: #selector(captureFullscreen))
+            item.setShortcut(for: .captureFullscreen)
+            return item
+        }
+
+        let parent = NSMenuItem(title: String(localized: "Capture Fullscreen"), action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: String(localized: "Capture Fullscreen"))
+
+        let current = menuItem(String(localized: "Current Display"), action: #selector(captureFullscreen))
+        current.setShortcut(for: .captureFullscreen)
+        submenu.addItem(current)
+        submenu.addItem(.separator())
+
+        for (index, screen) in screens.enumerated() {
+            let title: String
+            if screen == NSScreen.main {
+                title = String(format: String(localized: "Display %d (Main)"), index + 1)
+            } else {
+                title = String(format: String(localized: "Display %d"), index + 1)
+            }
+            let item = menuItem(title, action: #selector(captureSpecificDisplay(_:)))
+            item.representedObject = screen.displayID
+            if !screen.localizedName.isEmpty {
+                item.toolTip = screen.localizedName
+            }
+            submenu.addItem(item)
+        }
+
+        submenu.addItem(.separator())
+        submenu.addItem(menuItem(String(localized: "All Displays"), action: #selector(captureAllDisplays)))
+
+        parent.submenu = submenu
+        return parent
+    }
+
     @objc private func captureArea() {
         captureCoordinator.captureArea()
     }
@@ -179,6 +216,19 @@ final class MenuBarController: NSObject {
 
     @objc private func captureFullscreen() {
         captureCoordinator.captureFullscreen()
+    }
+
+    @objc private func captureSpecificDisplay(_ sender: NSMenuItem) {
+        guard let displayID = sender.representedObject as? CGDirectDisplayID else {
+            captureCoordinator.captureFullscreen()
+            return
+        }
+        let screen = NSScreen.screens.first { $0.displayID == displayID }
+        captureCoordinator.captureFullscreen(displayID: displayID, screen: screen)
+    }
+
+    @objc private func captureAllDisplays() {
+        captureCoordinator.captureAllDisplays()
     }
 
     @objc private func captureWindow() {

@@ -2,6 +2,7 @@
 import AppKit
 import CoreGraphics
 import AnnotationKit
+import CaptureKit
 import SharedKit
 
 /// Which visible handle is being dragged for resize or path adjustment.
@@ -21,6 +22,29 @@ private enum ResizeHandle {
         case .bottomRight:
             .bottomRight
         case .top, .bottom, .left, .right, .pathStart, .pathEnd, .pathControl:
+            nil
+        }
+    }
+
+    var captureSelectionHandle: CaptureSelectionResizeHandle? {
+        switch self {
+        case .topLeft:
+            .topLeft
+        case .topRight:
+            .topRight
+        case .bottomLeft:
+            .bottomLeft
+        case .bottomRight:
+            .bottomRight
+        case .top:
+            .top
+        case .bottom:
+            .bottom
+        case .left:
+            .left
+        case .right:
+            .right
+        case .pathStart, .pathEnd, .pathControl:
             nil
         }
     }
@@ -92,6 +116,7 @@ final class AnnotationCanvasNSView: NSView {
             needsDisplay = true
         }
     }
+    var currentPenStyle: PenStyle = .pen
     var onDocumentChanged: (() -> Void)?
     var onObjectCreated: (() -> Void)?
     /// Fired when an inline text edit begins. Passes the effective fontSize,
@@ -455,10 +480,10 @@ final class AnnotationCanvasNSView: NSView {
         drawLiveTextEditorChrome()
     }
 
-    /// ⌃ while drawing rectangle/ellipse locks equal width & height (square / circle).
-    private var shouldConstrainShapeAspect: Bool {
-        NSEvent.modifierFlags.contains(.control)
-    }
+    /// Cached ⌃ state for the active shape drag. Reading `NSEvent.modifierFlags`
+    /// only on mouseUp can miss Control even while it is still held, so preview
+    /// and commit must share this flag updated from drag / flagsChanged events.
+    private var constrainShapeAspect = false
 
     /// Axis-aligned rect from drag. With Control held on rect/ellipse tools,
     /// expands to a square/circle anchored at `start`, matching the drag quadrant.
@@ -469,11 +494,17 @@ final class AnnotationCanvasNSView: NSView {
             width: abs(end.x - start.x),
             height: abs(end.y - start.y)
         )
-        guard shouldConstrainShapeAspect,
+        guard constrainShapeAspect,
               currentTool == .rectangle || currentTool == .ellipse else {
             return freeform
         }
         return Self.equalSidesRect(from: start, to: end)
+    }
+
+    private func updateConstrainShapeAspect(from event: NSEvent) {
+        constrainShapeAspect = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .contains(.control)
     }
 
     private static func equalSidesRect(from start: CGPoint, to end: CGPoint) -> CGRect {
@@ -718,11 +749,32 @@ final class AnnotationCanvasNSView: NSView {
             ctx.addLine(to: p2)
             ctx.strokePath()
         case .line:
+            currentStyle.pattern.apply(to: ctx, lineWidth: currentStyle.lineWidth)
+            ctx.setLineCap(.round)
             ctx.move(to: start)
             ctx.addLine(to: end)
             ctx.strokePath()
-        case .rectangle: ctx.stroke(rect)
-        case .ellipse: ctx.strokeEllipse(in: rect)
+        case .rectangle:
+            if !currentStyle.filled {
+                currentStyle.pattern.apply(to: ctx, lineWidth: currentStyle.lineWidth)
+                ctx.setLineCap(.round)
+                ctx.setLineJoin(.round)
+                ctx.stroke(rect)
+            } else {
+                ctx.setFillColor(currentStyle.color.cgColor)
+                ctx.setAlpha(0.35)
+                ctx.fill(rect)
+            }
+        case .ellipse:
+            if !currentStyle.filled {
+                currentStyle.pattern.apply(to: ctx, lineWidth: currentStyle.lineWidth)
+                ctx.setLineCap(.round)
+                ctx.strokeEllipse(in: rect)
+            } else {
+                ctx.setFillColor(currentStyle.color.cgColor)
+                ctx.setAlpha(0.35)
+                ctx.fillEllipse(in: rect)
+            }
         case .pixelate: ctx.setFillColor(CGColor(gray: 0.5, alpha: 0.3)); ctx.fill(rect)
         default: break
         }
@@ -785,6 +837,7 @@ final class AnnotationCanvasNSView: NSView {
         resizeOriginalFreehandPoints = nil
         resizeOriginalEndpoints = nil
         resizeOriginalLineControlPoint = nil
+        updateConstrainShapeAspect(from: event)
 
         if let selected = doc.selectedObject,
            deleteButtonHitTest(point: point, object: selected) {
@@ -858,9 +911,17 @@ final class AnnotationCanvasNSView: NSView {
             if let snap = highlighterSnapRect {
                 let snappedY = snap.midY
                 let snappedPoint = CGPoint(x: point.x, y: snappedY)
-                activeFreehand = FreehandObject(points: [snappedPoint], style: currentStyle)
+                activeFreehand = FreehandObject(
+                    points: [snappedPoint],
+                    penStyle: currentTool == .highlighter ? .marker : currentPenStyle,
+                    style: currentStyle
+                )
             } else {
-                activeFreehand = FreehandObject(points: [point], style: currentStyle)
+                activeFreehand = FreehandObject(
+                    points: [point],
+                    penStyle: currentTool == .highlighter ? .marker : currentPenStyle,
+                    style: currentStyle
+                )
             }
         }
 
@@ -870,6 +931,9 @@ final class AnnotationCanvasNSView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let point = toImagePoint(convert(event.locationInWindow, from: nil))
         dragCurrent = point
+        if currentTool == .rectangle || currentTool == .ellipse || isResizingRectOrEllipseObject {
+            updateConstrainShapeAspect(from: event)
+        }
 
         if isResizingTextEditor,
            let editor = textEditor,
@@ -1022,9 +1086,23 @@ final class AnnotationCanvasNSView: NSView {
             return
         }
 
-        // Enforce minimum size
-        if newRect.width < 10 { newRect.size.width = 10 }
-        if newRect.height < 10 { newRect.size.height = 10 }
+        if constrainShapeAspect,
+           obj is RectangleObject || obj is EllipseObject,
+           let selectionHandle = handle.captureSelectionHandle {
+            let bounds = CGRect(origin: .zero, size: document?.imageSize ?? .zero)
+            newRect = CaptureSelectionGeometry.resize(
+                originalBounds,
+                handle: selectionHandle,
+                to: dragCurrent,
+                in: bounds,
+                minSize: CGSize(width: 10, height: 10),
+                aspectRatio: 1
+            )
+        } else {
+            // Enforce minimum size
+            if newRect.width < 10 { newRect.size.width = 10 }
+            if newRect.height < 10 { newRect.size.height = 10 }
+        }
 
         // Apply to the object
         if let rect = obj as? RectangleObject { rect.rect = newRect }
@@ -1119,7 +1197,10 @@ final class AnnotationCanvasNSView: NSView {
         guard let doc = document, let start = dragStart else {
             isDragging = false; return
         }
-        let end = toImagePoint(convert(event.locationInWindow, from: nil))
+        // Prefer last drag sample so commit matches the live preview; still
+        // refresh Control-constrain from this mouseUp event.
+        updateConstrainShapeAspect(from: event)
+        let end = dragCurrent ?? toImagePoint(convert(event.locationInWindow, from: nil))
 
         if activeResizeHandle != nil {
             dragObjectID = nil
@@ -1224,6 +1305,7 @@ final class AnnotationCanvasNSView: NSView {
         isDragging = false
         dragStart = nil
         dragCurrent = nil
+        constrainShapeAspect = false
         needsDisplay = true
         onDocumentChanged?()
 
@@ -1255,12 +1337,33 @@ final class AnnotationCanvasNSView: NSView {
     override func flagsChanged(with event: NSEvent) {
         // Live-update square/circle preview when Control is pressed or released mid-drag.
         if isDragging,
-           activeResizeHandle == nil,
-           !isMovingObject,
-           currentTool == .rectangle || currentTool == .ellipse {
+           (activeResizeHandle == nil && !isMovingObject
+               && (currentTool == .rectangle || currentTool == .ellipse))
+               || isResizingRectOrEllipseObject {
+            updateConstrainShapeAspect(from: event)
+            if activeResizeHandle != nil,
+               let handle = activeResizeHandle,
+               let objID = dragObjectID,
+               let origBounds = resizeOriginalBounds,
+               let start = dragStart,
+               let current = dragCurrent {
+                resizeObject(
+                    id: objID,
+                    handle: handle,
+                    originalBounds: origBounds,
+                    dragStart: start,
+                    dragCurrent: current
+                )
+            }
             needsDisplay = true
         }
         super.flagsChanged(with: event)
+    }
+
+    private var isResizingRectOrEllipseObject: Bool {
+        guard activeResizeHandle != nil, let objID = dragObjectID else { return false }
+        guard let obj = document?.objects.first(where: { $0.id == objID }) else { return false }
+        return obj is RectangleObject || obj is EllipseObject
     }
 
     /// Handles ⌘C / ⌘V / ⌘D for annotation objects. Returns `true` when handled.
