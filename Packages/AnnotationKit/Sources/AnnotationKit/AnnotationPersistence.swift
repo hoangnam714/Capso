@@ -94,6 +94,7 @@ public enum AnnotationRecord: Codable, Sendable {
     case pixelate(PixelateRecord)
     case counter(CounterRecord)
     case image(ImageRecord)
+    case highlightFocus(HighlightFocusRecord)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -119,6 +120,8 @@ public enum AnnotationRecord: Codable, Sendable {
             self = .counter(CounterRecord(counter))
         case let image as ImageObject:
             self = .image(ImageRecord(image))
+        case let highlightFocus as HighlightFocusObject:
+            self = .highlightFocus(HighlightFocusRecord(highlightFocus))
         default:
             return nil
         }
@@ -146,6 +149,8 @@ public enum AnnotationRecord: Codable, Sendable {
             self = .counter(try CounterRecord(from: decoder))
         case "image":
             self = .image(try ImageRecord(from: decoder))
+        case "highlightFocus":
+            self = .highlightFocus(try HighlightFocusRecord(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type,
@@ -175,6 +180,8 @@ public enum AnnotationRecord: Codable, Sendable {
             try record.encode(to: encoder)
         case .image(let record):
             try record.encode(to: encoder)
+        case .highlightFocus(let record):
+            try record.encode(to: encoder)
         }
     }
 
@@ -189,6 +196,7 @@ public enum AnnotationRecord: Codable, Sendable {
         case .pixelate(let record): return record.makeObject()
         case .counter(let record): return record.makeObject()
         case .image(let record): return record.makeObject()
+        case .highlightFocus(let record): return record.makeObject()
         }
     }
 }
@@ -395,5 +403,29 @@ public struct ImageRecord: Codable, Sendable {
 
     public func makeObject() -> ImageObject {
         ImageObject(imageData: imageData, rect: rect.cgRect, style: style)
+    }
+}
+
+public struct HighlightFocusRecord: Codable, Sendable {
+    public var type: String = "highlightFocus"
+    public var style: StrokeStyle
+    public var canvasRect: CodableRect
+    public var focusRects: [CodableRect]
+    public var cornerRadius: Double
+
+    public init(_ object: HighlightFocusObject) {
+        self.style = object.style
+        self.canvasRect = CodableRect(object.canvasRect)
+        self.focusRects = object.focusRects.map(CodableRect.init)
+        self.cornerRadius = object.cornerRadius
+    }
+
+    public func makeObject() -> HighlightFocusObject {
+        HighlightFocusObject(
+            canvasRect: canvasRect.cgRect,
+            focusRects: focusRects.map(\.cgRect),
+            cornerRadius: cornerRadius,
+            style: style
+        )
     }
 }

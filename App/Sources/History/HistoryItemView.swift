@@ -28,10 +28,14 @@ struct HistoryItemView: View {
     }
 
     private var timeString: String {
+        Self.relativeFormatter.localizedString(for: entry.createdAt, relativeTo: Date())
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: entry.createdAt, relativeTo: Date())
-    }
+        return formatter
+    }()
 
     private var dimensionString: String {
         "\(entry.imageWidth) × \(entry.imageHeight)"
@@ -157,7 +161,8 @@ struct HistoryItemView: View {
         .scaleEffect(isHovered ? 1.02 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .onHover { isHovered = $0 }
-        .onAppear { loadThumbnail() }
+        .task(id: entry.id) { await loadThumbnail() }
+        .onDisappear { thumbnailImage = nil }
         .contextMenu { contextMenu }
         .sheet(isPresented: $showDeleteConfirm) {
             DeleteConfirmSheet(
@@ -344,9 +349,11 @@ struct HistoryItemView: View {
         }
     }
 
-    private func loadThumbnail() {
+    private func loadThumbnail() async {
         guard let url = coordinator.thumbnailURL(for: entry) else { return }
-        thumbnailImage = NSImage(contentsOf: url)
+        let image = await HistoryThumbnailCache.image(for: url)
+        guard !Task.isCancelled else { return }
+        thumbnailImage = image
     }
 }
 

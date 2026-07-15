@@ -135,3 +135,26 @@ struct PenStylePicker: View {
         .help("Pen Style")
     }
 }
+
+/// Compact labeled slider for toolbar parameter controls (e.g. Highlight Focus).
+struct LabeledSlider: View {
+    let title: String
+    @Binding var value: CGFloat
+    let range: ClosedRange<CGFloat>
+    var step: CGFloat = 1
+    var width: CGFloat = 80
+    var valueText: String
+    var emphasizesOnDark: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(LocalizedStringKey(title))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(emphasizesOnDark ? Color.white.opacity(0.72) : Color.secondary)
+                .lineLimit(1)
+            Slider(value: $value, in: range, step: step)
+                .frame(width: width)
+                .help("\(title): \(valueText)")
+        }
+    }
+}

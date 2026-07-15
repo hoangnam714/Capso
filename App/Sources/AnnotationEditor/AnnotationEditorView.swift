@@ -54,6 +54,8 @@ struct AnnotationEditorView: View {
     @AppStorage("annotationBlockSize") private var savedBlockSize: Double = 12
     @AppStorage("annotationCounterSize") private var savedCounterSize: Double = 20
     @AppStorage("annotationHighlighterWidth") private var savedHighlighterWidth: Double = 20
+    @AppStorage("annotationHighlightFocusCornerRadius") private var savedHighlightFocusCornerRadius: Double = 12
+    @AppStorage("annotationHighlightFocusOpacity") private var savedHighlightFocusOpacity: Double = 0.55
     @AppStorage("annotationRedactionMode") private var redactionMode: RedactionMode = .pixelate
     @AppStorage("annotationStrokePattern") private var savedStrokePattern: StrokePattern = .solid
     @AppStorage("annotationTextFillEnabled") private var textFillEnabled: Bool = false
@@ -69,6 +71,7 @@ struct AnnotationEditorView: View {
     @AppStorage("annotationTextFontSize") private var savedTextFontSize: Double = 48
 
     @State private var lineWidth: CGFloat = 3
+    @State private var highlightFocusOpacity: CGFloat = HighlightFocusObject.defaultDimOpacity
     @State private var strokePattern: StrokePattern = .solid
     /// True while an inline text editor is active. Lets the toolbar show
     /// the font-size slider even when the tool is `.select` (happens when
@@ -128,11 +131,20 @@ struct AnnotationEditorView: View {
     }
 
     private var currentStyle: AnnotationKit.StrokeStyle {
-        AnnotationKit.StrokeStyle(
+        let opacity: CGFloat
+        switch currentTool {
+        case .highlighter:
+            opacity = 0.35
+        case .highlightFocus:
+            opacity = highlightFocusOpacity
+        default:
+            opacity = 1.0
+        }
+        return AnnotationKit.StrokeStyle(
             color: currentColor,
             lineWidth: lineWidth,
-            opacity: currentTool == .highlighter ? 0.35 : 1.0,
-            filled: filled,
+            opacity: opacity,
+            filled: filled || currentTool == .highlightFocus,
             pattern: strokePattern
         )
     }
@@ -160,6 +172,7 @@ struct AnnotationEditorView: View {
         case is LineObject: return .line
         case is RectangleObject: return .rectangle
         case is EllipseObject: return .ellipse
+        case is HighlightFocusObject: return .highlightFocus
         default: return nil
         }
     }
@@ -187,6 +200,7 @@ struct AnnotationEditorView: View {
         case .pixelate: return CGFloat(savedBlockSize)
         case .counter: return CGFloat(savedCounterSize)
         case .highlighter: return CGFloat(savedHighlighterWidth)
+        case .highlightFocus: return CGFloat(savedHighlightFocusCornerRadius)
         case .text: return CGFloat(savedTextFontSize)
         default: return CGFloat(savedLineWidth)
         }
@@ -200,6 +214,7 @@ struct AnnotationEditorView: View {
         case .pixelate: savedBlockSize = Double(width)
         case .counter: savedCounterSize = Double(width)
         case .highlighter: savedHighlighterWidth = Double(width)
+        case .highlightFocus: savedHighlightFocusCornerRadius = Double(width)
         case .text: savedTextFontSize = Double(width)
         default: savedLineWidth = Double(width)
         }
@@ -279,6 +294,7 @@ struct AnnotationEditorView: View {
             redactionMode: $redactionMode,
             showBeautifyPanel: $showBeautifyPanel,
             penStyle: $penStyle,
+            highlightFocusOpacity: $highlightFocusOpacity,
             isEditingText: isEditingText,
             sizeControlTool: sizeControlTool,
             canUndo: document.canUndo,
@@ -310,6 +326,7 @@ struct AnnotationEditorView: View {
             .onChange(of: currentTool, handleToolChange)
             .onChange(of: currentColor) { _, _ in updateSelectedStyle() }
             .onChange(of: lineWidth, handleLineWidthChange)
+            .onChange(of: highlightFocusOpacity, handleHighlightFocusOpacityChange)
             .onChange(of: strokePattern, handleStrokePatternChange)
             .onChange(of: filled) { _, _ in updateSelectedStyle() }
             .onChange(of: textFillEnabled) { _, _ in updateSelectedStyle() }
@@ -445,7 +462,23 @@ struct AnnotationEditorView: View {
     private func handleCanvasAppear(size: CGSize) {
         fitToWindow(availableSize: size)
         lineWidth = savedWidth(for: currentTool)
+        highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
         strokePattern = savedStrokePattern
+        if currentTool == .highlightFocus {
+            if currentColor != .black && document.highlightFocusObject == nil {
+                currentColor = .black
+            }
+            document.ensureHighlightFocusOverlay(
+                cornerRadius: lineWidth,
+                style: AnnotationKit.StrokeStyle(
+                    color: currentColor,
+                    lineWidth: 1,
+                    opacity: highlightFocusOpacity,
+                    filled: true
+                )
+            )
+            refreshTrigger += 1
+        }
         Task {
             if let regions = try? await TextRecognizer.recognize(
                 image: sourceImage, level: .fast, detectURLs: false
@@ -459,11 +492,37 @@ struct AnnotationEditorView: View {
         document.clearSelection()
         persistWidth(lineWidth, for: oldTool)
         lineWidth = savedWidth(for: newTool)
+        if oldTool == .highlightFocus, newTool != .highlightFocus {
+            document.removeEmptyHighlightFocusOverlay()
+            refreshTrigger += 1
+        }
+        if newTool == .highlightFocus {
+            // Default spotlight color is black; user can change via the picker.
+            if currentColor != .black && document.highlightFocusObject == nil {
+                currentColor = .black
+            }
+            highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
+            document.ensureHighlightFocusOverlay(
+                cornerRadius: lineWidth,
+                style: AnnotationKit.StrokeStyle(
+                    color: currentColor,
+                    lineWidth: 1,
+                    opacity: highlightFocusOpacity,
+                    filled: true
+                )
+            )
+            refreshTrigger += 1
+        }
     }
 
     private func handleLineWidthChange(oldValue: CGFloat, newValue: CGFloat) {
         updateSelectedStyle()
         persistWidth(newValue, for: sizeToolForPersistence)
+    }
+
+    private func handleHighlightFocusOpacityChange(oldValue: CGFloat, newValue: CGFloat) {
+        savedHighlightFocusOpacity = Double(newValue)
+        updateSelectedStyle()
     }
 
     private func handleSelectionChange(oldValue: ObjectID?, newValue: ObjectID?) {
@@ -498,6 +557,16 @@ struct AnnotationEditorView: View {
                 lineWidth = pixelate.blockSize
             }
             redactionMode = pixelate.mode
+            return
+        }
+        if let spotlight = object as? HighlightFocusObject {
+            if lineWidth != spotlight.cornerRadius {
+                lineWidth = spotlight.cornerRadius
+            }
+            if abs(highlightFocusOpacity - spotlight.style.opacity) > 0.001 {
+                highlightFocusOpacity = spotlight.style.opacity
+            }
+            currentColor = spotlight.style.color
             return
         }
         if let freehand = object as? FreehandObject, freehand.style.opacity >= 0.5 {
@@ -592,6 +661,20 @@ struct AnnotationEditorView: View {
 
     /// Update the selected object's style when color/lineWidth/filled changes
     private func updateSelectedStyle() {
+        if let spotlight = document.highlightFocusObject,
+           currentTool == .highlightFocus || document.selectedObject is HighlightFocusObject {
+            spotlight.cornerRadius = lineWidth
+            spotlight.style = AnnotationKit.StrokeStyle(
+                color: currentColor,
+                lineWidth: 1,
+                opacity: highlightFocusOpacity,
+                filled: true
+            )
+            refreshTrigger += 1
+            if document.selectedObject is HighlightFocusObject || document.selectedObject == nil {
+                return
+            }
+        }
         if let obj = document.selectedObject {
             if let pixelate = obj as? PixelateObject {
                 pixelate.blockSize = lineWidth
@@ -613,6 +696,8 @@ struct AnnotationEditorView: View {
             } else if let freehand = obj as? FreehandObject {
                 freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
                 freehand.style = currentStyle
+            } else if obj is HighlightFocusObject {
+                // Already handled above.
             } else {
                 obj.style = currentStyle
             }

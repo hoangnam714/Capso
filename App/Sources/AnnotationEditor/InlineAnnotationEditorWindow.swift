@@ -147,6 +147,8 @@ private struct InlineAnnotationEditorView: View {
     @AppStorage("annotationBlockSize") private var savedBlockSize: Double = 12
     @AppStorage("annotationCounterSize") private var savedCounterSize: Double = 20
     @AppStorage("annotationHighlighterWidth") private var savedHighlighterWidth: Double = 20
+    @AppStorage("annotationHighlightFocusCornerRadius") private var savedHighlightFocusCornerRadius: Double = 12
+    @AppStorage("annotationHighlightFocusOpacity") private var savedHighlightFocusOpacity: Double = 0.55
     @AppStorage("annotationRedactionMode") private var redactionMode: RedactionMode = .pixelate
     @AppStorage("annotationTextFontSize") private var savedTextFontSize: Double = 48
     @AppStorage("annotationStrokePattern") private var savedStrokePattern: StrokePattern = .solid
@@ -160,6 +162,7 @@ private struct InlineAnnotationEditorView: View {
     @AppStorage("annotationPenStyle") private var penStyle: PenStyle = .pen
 
     @State private var lineWidth: CGFloat = 3
+    @State private var highlightFocusOpacity: CGFloat = HighlightFocusObject.defaultDimOpacity
     @State private var strokePattern: StrokePattern = .solid
     @State private var isEditingText = false
     @State private var refreshTrigger = 0
@@ -178,11 +181,20 @@ private struct InlineAnnotationEditorView: View {
     }
 
     private var currentStyle: AnnotationKit.StrokeStyle {
-        AnnotationKit.StrokeStyle(
+        let opacity: CGFloat
+        switch currentTool {
+        case .highlighter:
+            opacity = 0.35
+        case .highlightFocus:
+            opacity = highlightFocusOpacity
+        default:
+            opacity = 1.0
+        }
+        return AnnotationKit.StrokeStyle(
             color: currentColor,
             lineWidth: lineWidth,
-            opacity: currentTool == .highlighter ? 0.35 : 1.0,
-            filled: filled,
+            opacity: opacity,
+            filled: filled || currentTool == .highlightFocus,
             pattern: strokePattern
         )
     }
@@ -219,7 +231,11 @@ private struct InlineAnnotationEditorView: View {
         let margin: CGFloat = 16
         let gap: CGFloat = 12
         let toolbarWidth = max(360, min(screenSize.width - margin * 2, 880))
-        let toolbarHeight: CGFloat = (currentTool == .text || isEditingText) ? 102 : 58
+        let toolbarHeight: CGFloat = {
+            if currentTool == .text || isEditingText { return 102 }
+            if currentTool == .highlightFocus { return 72 }
+            return 58
+        }()
         let targetX = canvasRect.midX - toolbarWidth / 2
         let maxX = max(margin, screenSize.width - toolbarWidth - margin)
         let x = min(max(targetX, margin), maxX)
@@ -247,6 +263,7 @@ private struct InlineAnnotationEditorView: View {
         .onChange(of: currentTool, handleToolChange)
         .onChange(of: currentColor) { _, _ in updateSelectedStyle() }
         .onChange(of: lineWidth, handleLineWidthChange)
+        .onChange(of: highlightFocusOpacity, handleHighlightFocusOpacityChange)
         .onChange(of: strokePattern, handleStrokePatternChange)
         .onChange(of: filled) { _, _ in updateSelectedStyle() }
         .onChange(of: textFillEnabled) { _, _ in updateSelectedStyle() }
@@ -307,6 +324,7 @@ private struct InlineAnnotationEditorView: View {
             currentTool: $currentTool,
             currentColor: $currentColor,
             lineWidth: $lineWidth,
+            highlightFocusOpacity: $highlightFocusOpacity,
             strokePattern: $strokePattern,
             filled: $filled,
             textFillEnabled: $textFillEnabled,
@@ -355,7 +373,23 @@ private struct InlineAnnotationEditorView: View {
 
     private func handleAppear() {
         lineWidth = savedWidth(for: currentTool)
+        highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
         strokePattern = savedStrokePattern
+        if currentTool == .highlightFocus {
+            if currentColor != .black && document.highlightFocusObject == nil {
+                currentColor = .black
+            }
+            document.ensureHighlightFocusOverlay(
+                cornerRadius: lineWidth,
+                style: AnnotationKit.StrokeStyle(
+                    color: currentColor,
+                    lineWidth: 1,
+                    opacity: highlightFocusOpacity,
+                    filled: true
+                )
+            )
+            refreshTrigger += 1
+        }
         Task {
             if let regions = try? await TextRecognizer.recognize(
                 image: sourceImage,
@@ -371,11 +405,36 @@ private struct InlineAnnotationEditorView: View {
         document.clearSelection()
         persistWidth(lineWidth, for: oldTool)
         lineWidth = savedWidth(for: newTool)
+        if oldTool == .highlightFocus, newTool != .highlightFocus {
+            document.removeEmptyHighlightFocusOverlay()
+            refreshTrigger += 1
+        }
+        if newTool == .highlightFocus {
+            if currentColor != .black && document.highlightFocusObject == nil {
+                currentColor = .black
+            }
+            highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
+            document.ensureHighlightFocusOverlay(
+                cornerRadius: lineWidth,
+                style: AnnotationKit.StrokeStyle(
+                    color: currentColor,
+                    lineWidth: 1,
+                    opacity: highlightFocusOpacity,
+                    filled: true
+                )
+            )
+            refreshTrigger += 1
+        }
     }
 
     private func handleLineWidthChange(oldValue: CGFloat, newValue: CGFloat) {
         updateSelectedStyle()
         persistWidth(newValue, for: currentTool)
+    }
+
+    private func handleHighlightFocusOpacityChange(oldValue: CGFloat, newValue: CGFloat) {
+        savedHighlightFocusOpacity = Double(newValue)
+        updateSelectedStyle()
     }
 
     private func handleStrokePatternChange(oldValue: StrokePattern, newValue: StrokePattern) {
@@ -437,6 +496,7 @@ private struct InlineAnnotationEditorView: View {
         case .pixelate: return CGFloat(savedBlockSize)
         case .counter: return CGFloat(savedCounterSize)
         case .highlighter: return CGFloat(savedHighlighterWidth)
+        case .highlightFocus: return CGFloat(savedHighlightFocusCornerRadius)
         case .text: return CGFloat(savedTextFontSize)
         default: return CGFloat(savedLineWidth)
         }
@@ -447,12 +507,27 @@ private struct InlineAnnotationEditorView: View {
         case .pixelate: savedBlockSize = Double(width)
         case .counter: savedCounterSize = Double(width)
         case .highlighter: savedHighlighterWidth = Double(width)
+        case .highlightFocus: savedHighlightFocusCornerRadius = Double(width)
         case .text: savedTextFontSize = Double(width)
         default: savedLineWidth = Double(width)
         }
     }
 
     private func updateSelectedStyle() {
+        if let spotlight = document.highlightFocusObject,
+           currentTool == .highlightFocus || document.selectedObject is HighlightFocusObject {
+            spotlight.cornerRadius = lineWidth
+            spotlight.style = AnnotationKit.StrokeStyle(
+                color: currentColor,
+                lineWidth: 1,
+                opacity: highlightFocusOpacity,
+                filled: true
+            )
+            refreshTrigger += 1
+            if document.selectedObject is HighlightFocusObject || document.selectedObject == nil {
+                return
+            }
+        }
         if let obj = document.selectedObject {
             if let pixelate = obj as? PixelateObject {
                 pixelate.blockSize = lineWidth
@@ -478,6 +553,8 @@ private struct InlineAnnotationEditorView: View {
             } else if let freehand = obj as? FreehandObject {
                 freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
                 freehand.style = currentStyle
+            } else if obj is HighlightFocusObject {
+                // Already handled above.
             } else {
                 obj.style = currentStyle
             }
@@ -541,6 +618,7 @@ private struct InlineAnnotationToolbar: View {
     @Binding var currentTool: AnnotationTool
     @Binding var currentColor: AnnotationColor
     @Binding var lineWidth: CGFloat
+    @Binding var highlightFocusOpacity: CGFloat
     @Binding var strokePattern: StrokePattern
     @Binding var filled: Bool
     @Binding var textFillEnabled: Bool
@@ -584,6 +662,7 @@ private struct InlineAnnotationToolbar: View {
                     toolButton(.pixelate)
                     toolButton(.counter)
                     toolButton(.highlighter)
+                    toolButton(.highlightFocus)
                     insertImageButton(
                         systemName: "doc.on.clipboard",
                         help: "Paste Image from Clipboard",
@@ -637,6 +716,25 @@ private struct InlineAnnotationToolbar: View {
         HStack(spacing: 7) {
             if isFontSizeMode {
                 FontSizeControl(size: $lineWidth)
+            } else if currentTool == .highlightFocus {
+                LabeledSlider(
+                    title: "Dim",
+                    value: $highlightFocusOpacity,
+                    range: 0.15...0.90,
+                    step: 0.05,
+                    width: 72,
+                    valueText: "\(Int(highlightFocusOpacity * 100))%",
+                    emphasizesOnDark: true
+                )
+                LabeledSlider(
+                    title: "Radius",
+                    value: $lineWidth,
+                    range: 0...40,
+                    step: 1,
+                    width: 72,
+                    valueText: "\(Int(lineWidth))",
+                    emphasizesOnDark: true
+                )
             } else if !(currentTool == .pixelate && redactionMode == .solid) {
                 Slider(value: $lineWidth, in: sliderRange, step: sliderStep)
                     .frame(width: 82)
@@ -667,6 +765,7 @@ private struct InlineAnnotationToolbar: View {
                 && currentTool != .arrow
                 && currentTool != .line
                 && currentTool != .highlighter
+                && currentTool != .highlightFocus
                 && currentTool != .freehand
                 && currentTool != .pixelate
                 && !isFontSizeMode {
@@ -905,6 +1004,7 @@ private struct InlineAnnotationToolbar: View {
         case .pixelate: return "eye.slash.fill"
         case .counter: return "number.circle.fill"
         case .highlighter: return "highlighter"
+        case .highlightFocus: return "circle.lefthalf.filled"
         }
     }
 
@@ -920,6 +1020,7 @@ private struct InlineAnnotationToolbar: View {
         case .pixelate: return "Pixelate / Blur"
         case .counter: return "Counter"
         case .highlighter: return "Highlighter"
+        case .highlightFocus: return "Highlight Focus"
         }
     }
 

@@ -78,6 +78,15 @@ struct AnnotationPersistenceTests {
             number: 2,
             radius: 18
         ))
+        doc.addObject(HighlightFocusObject(
+            canvasRect: CGRect(x: 0, y: 0, width: 640, height: 480),
+            focusRects: [
+                CGRect(x: 40, y: 50, width: 120, height: 36),
+                CGRect(x: 200, y: 100, width: 80, height: 40)
+            ],
+            cornerRadius: 14,
+            style: StrokeStyle(color: .black, lineWidth: 1, opacity: 0.55, filled: true)
+        ))
         doc.setCropRect(CGRect(x: 10, y: 10, width: 400, height: 300))
 
         let data = try doc.exportSidecar().encoded()
@@ -88,15 +97,21 @@ struct AnnotationPersistenceTests {
 
         #expect(restored.imageSize == CGSize(width: 640, height: 480))
         #expect(restored.cropRect == CGRect(x: 10, y: 10, width: 400, height: 300))
-        #expect(restored.objects.count == 10)
+        #expect(restored.objects.count == 11)
 
-        let arrow = try #require(restored.objects[0] as? ArrowObject)
+        // Highlight focus is inserted at index 0 by AnnotationDocument.addObject.
+        let spotlight = try #require(restored.objects[0] as? HighlightFocusObject)
+        #expect(spotlight.focusRects.count == 2)
+        #expect(spotlight.cornerRadius == 14)
+        #expect(spotlight.style.opacity == 0.55)
+
+        let arrow = try #require(restored.objects[1] as? ArrowObject)
         #expect(arrow.start == CGPoint(x: 10, y: 20))
         #expect(arrow.end == CGPoint(x: 100, y: 120))
         #expect(arrow.style.lineWidth == 4)
         #expect(arrow.style.pattern == .dashed)
 
-        let text = try #require(restored.objects[4] as? TextObject)
+        let text = try #require(restored.objects[5] as? TextObject)
         #expect(text.text == "Hello")
         #expect(text.fontSize == 18)
         #expect(text.isBold == true)
@@ -104,17 +119,17 @@ struct AnnotationPersistenceTests {
         #expect(text.isUnderline == true)
         #expect(text.alignment == .right)
 
-        let image = try #require(restored.objects[5] as? ImageObject)
+        let image = try #require(restored.objects[6] as? ImageObject)
         #expect(image.rect == CGRect(x: 50, y: 60, width: 40, height: 30))
         #expect(image.cgImage?.width == 16)
         #expect(image.cgImage?.height == 12)
 
-        let pixelate = try #require(restored.objects[7] as? PixelateObject)
+        let pixelate = try #require(restored.objects[8] as? PixelateObject)
         #expect(pixelate.mode == .blur)
         #expect(pixelate.blockSize == 8)
 
-        let counter1 = try #require(restored.objects[8] as? CounterObject)
-        let counter2 = try #require(restored.objects[9] as? CounterObject)
+        let counter1 = try #require(restored.objects[9] as? CounterObject)
+        let counter2 = try #require(restored.objects[10] as? CounterObject)
         #expect(counter1.number == 1)
         #expect(counter2.number == 2)
     }

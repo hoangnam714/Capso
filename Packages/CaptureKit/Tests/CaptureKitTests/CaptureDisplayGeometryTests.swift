@@ -191,6 +191,43 @@ struct CaptureDisplayGeometryTests {
         #expect(stitched?.height == 100)
     }
 
+    @Test("Stitches fullscreen displays with different sizes and vertical offsets")
+    func stitchFullscreenLayoutWithOffsetMonitors() {
+        // Laptop 1440x900 @2x on the left; external 1920x1080 @1x to the right,
+        // shifted down by 90pt — same arrangement as a typical dual-monitor desk.
+        let left = makeSolidImage(width: 2880, height: 1800, red: 1, green: 0, blue: 0)!
+        let right = makeSolidImage(width: 1920, height: 1080, red: 0, green: 0, blue: 1)!
+        let desktop = CaptureDisplayGeometry.virtualDesktopBounds(
+            screenFrames: [
+                CGRect(x: 0, y: 0, width: 1440, height: 900),
+                CGRect(x: 1440, y: -90, width: 1920, height: 1080),
+            ]
+        )
+
+        let stitched = MultiDisplayImageStitcher.stitch(
+            slices: [
+                MultiDisplayCaptureSlice(
+                    image: left,
+                    originInSelection: CGPoint(x: 0 - desktop.minX, y: 0 - desktop.minY),
+                    sizeInPoints: CGSize(width: 1440, height: 900),
+                    scale: 2
+                ),
+                MultiDisplayCaptureSlice(
+                    image: right,
+                    originInSelection: CGPoint(x: 1440 - desktop.minX, y: -90 - desktop.minY),
+                    sizeInPoints: CGSize(width: 1920, height: 1080),
+                    scale: 1
+                ),
+            ],
+            selectionSize: desktop.size,
+            outputScale: 2
+        )
+
+        #expect(desktop == CGRect(x: 0, y: -90, width: 3360, height: 1080))
+        #expect(stitched?.width == 6720)
+        #expect(stitched?.height == 2160)
+    }
+
     private func makeSolidImage(
         width: Int,
         height: Int,

@@ -19,6 +19,8 @@ struct AnnotationToolbar: View {
     @Binding var redactionMode: RedactionMode
     @Binding var showBeautifyPanel: Bool
     @Binding var penStyle: PenStyle
+    /// Dim overlay opacity for Highlight Focus (0…1).
+    @Binding var highlightFocusOpacity: CGFloat
     /// True when an inline text edit is active (either via the text tool or
     /// by double-clicking an existing TextObject in select mode). When set,
     /// the size slider behaves as a Font Size control regardless of the
@@ -99,6 +101,7 @@ struct AnnotationToolbar: View {
             toolButton(.pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur")
             toolButton(.counter, icon: "number.circle.fill", label: "Counter")
             toolButton(.highlighter, icon: "highlighter", label: "Highlighter")
+            toolButton(.highlightFocus, icon: "circle.lefthalf.filled", label: "Highlight Focus")
             toolbarDivider
             insertImageButton(
                 icon: "doc.on.clipboard",
@@ -199,6 +202,23 @@ struct AnnotationToolbar: View {
                 Slider(value: $lineWidth, in: 10...100, step: 2)
                     .frame(width: 80)
                     .help("Highlighter Width: \(Int(lineWidth))")
+            } else if effectiveSizeTool == .highlightFocus {
+                LabeledSlider(
+                    title: "Dim",
+                    value: $highlightFocusOpacity,
+                    range: 0.15...0.90,
+                    step: 0.05,
+                    width: 80,
+                    valueText: "\(Int(highlightFocusOpacity * 100))%"
+                )
+                LabeledSlider(
+                    title: "Radius",
+                    value: $lineWidth,
+                    range: 0...40,
+                    step: 1,
+                    width: 80,
+                    valueText: "\(Int(lineWidth))"
+                )
             } else if effectiveSizeTool != .select {
                 Slider(value: $lineWidth, in: 1...40, step: 1)
                     .frame(width: 80)
@@ -218,6 +238,7 @@ struct AnnotationToolbar: View {
                 && effectiveSizeTool != .arrow
                 && effectiveSizeTool != .line
                 && effectiveSizeTool != .highlighter
+                && effectiveSizeTool != .highlightFocus
                 && effectiveSizeTool != .freehand
                 && effectiveSizeTool != .select
                 && !isFontSizeMode {

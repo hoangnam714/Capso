@@ -9,8 +9,12 @@ import AppKit
 struct AnnotationObjectTests {
     @Test("AnnotationTool has all cases")
     func tools() {
-        let tools: [AnnotationTool] = [.select, .arrow, .line, .rectangle, .ellipse, .text, .freehand, .pixelate, .counter, .highlighter]
-        #expect(tools.count == 10)
+        let tools: [AnnotationTool] = [
+            .select, .arrow, .line, .rectangle, .ellipse, .text,
+            .freehand, .pixelate, .counter, .highlighter, .highlightFocus
+        ]
+        #expect(tools.count == 11)
+        #expect(AnnotationTool.allCases.count == 11)
     }
 
     @Test("StrokeStyle has defaults")
@@ -364,6 +368,78 @@ struct EllipseObjectTests {
     func bounds() {
         let ellipse = EllipseObject(rect: CGRect(x: 10, y: 20, width: 100, height: 50))
         #expect(ellipse.bounds == CGRect(x: 10, y: 20, width: 100, height: 50))
+    }
+}
+
+@Suite("HighlightFocusObject")
+struct HighlightFocusObjectTests {
+    @Test("Bounds union focus rects and hit-tests holes")
+    func boundsAndHitTest() {
+        let spotlight = HighlightFocusObject(
+            canvasRect: CGRect(x: 0, y: 0, width: 200, height: 100),
+            focusRects: [
+                CGRect(x: 10, y: 10, width: 40, height: 20),
+                CGRect(x: 80, y: 40, width: 30, height: 25)
+            ]
+        )
+        #expect(spotlight.bounds == CGRect(x: 10, y: 10, width: 100, height: 55))
+        #expect(spotlight.hitTest(point: CGPoint(x: 20, y: 15), threshold: 0))
+        #expect(!spotlight.hitTest(point: CGPoint(x: 5, y: 5), threshold: 0))
+        #expect(spotlight.focusIndex(at: CGPoint(x: 90, y: 50), threshold: 0) == 1)
+    }
+
+    @Test("Copy preserves style and focus regions")
+    func copyPreserves() {
+        let spotlight = HighlightFocusObject(
+            canvasRect: CGRect(x: 0, y: 0, width: 100, height: 80),
+            focusRects: [CGRect(x: 5, y: 5, width: 20, height: 10)],
+            cornerRadius: 8,
+            style: StrokeStyle(color: .black, opacity: 0.4, filled: true)
+        )
+        let copy = spotlight.copy() as! HighlightFocusObject
+        #expect(copy.focusRects == spotlight.focusRects)
+        #expect(copy.cornerRadius == 8)
+        #expect(copy.style.opacity == 0.4)
+    }
+
+    @Test("Document ensures empty dim overlay for Highlight Focus")
+    @MainActor
+    func ensureEmptyOverlay() {
+        let doc = AnnotationDocument(imageSize: CGSize(width: 100, height: 80))
+        doc.ensureHighlightFocusOverlay(
+            cornerRadius: 10,
+            style: StrokeStyle(color: .black, opacity: 0.55, filled: true)
+        )
+        let spotlight = doc.highlightFocusObject
+        #expect(spotlight != nil)
+        #expect(spotlight?.focusRects.isEmpty == true)
+        #expect(doc.selectedObjectID == nil)
+
+        doc.removeEmptyHighlightFocusOverlay()
+        #expect(doc.highlightFocusObject == nil)
+    }
+
+    @Test("Focus regions can move and resize independently")
+    func independentFocusRegions() {
+        let spotlight = HighlightFocusObject(
+            canvasRect: CGRect(x: 0, y: 0, width: 200, height: 100),
+            focusRects: [
+                CGRect(x: 10, y: 10, width: 40, height: 20),
+                CGRect(x: 80, y: 40, width: 30, height: 25)
+            ]
+        )
+        spotlight.moveFocusRect(at: 1, by: CGSize(width: 5, height: -3))
+        #expect(spotlight.focusRects[0] == CGRect(x: 10, y: 10, width: 40, height: 20))
+        #expect(spotlight.focusRects[1] == CGRect(x: 85, y: 37, width: 30, height: 25))
+
+        spotlight.setFocusRect(CGRect(x: 12, y: 14, width: 50, height: 22), at: 0)
+        #expect(spotlight.focusRects[0] == CGRect(x: 12, y: 14, width: 50, height: 22))
+        #expect(spotlight.focusRects[1] == CGRect(x: 85, y: 37, width: 30, height: 25))
+
+        #expect(spotlight.removeFocusRect(at: 0) == false)
+        #expect(spotlight.focusRects.count == 1)
+        #expect(spotlight.removeFocusRect(at: 0) == true)
+        #expect(spotlight.focusRects.isEmpty)
     }
 }
 

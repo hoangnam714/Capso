@@ -827,16 +827,32 @@ final class CaptureOverlayView: NSView {
 
         updateCrossScreenDrag(to: NSEvent.mouseLocation)
         let global = globalSelectionRect
+        let dragDistance = hypot(
+            dragEndGlobal.x - dragStartGlobal.x,
+            dragEndGlobal.y - dragStartGlobal.y
+        )
         endCrossScreenDrag(broadcastClear: true)
 
-        guard let screenFrame = window?.screen?.frame else { return }
+        // Click without dragging (press + release in place) cancels capture.
+        let clickSlop: CGFloat = 5
+        if dragDistance <= clickSlop || global.width <= clickSlop || global.height <= clickSlop {
+            cancelOverlay()
+            return
+        }
+
+        guard let screenFrame = window?.screen?.frame else {
+            cancelOverlay()
+            return
+        }
         let localRect = CaptureDisplayGeometry.screenLocalRect(
             fromGlobalAppKitRect: global,
             screenFrame: screenFrame
         )
-        if localRect.width > 5 && localRect.height > 5 {
+        if localRect.width > clickSlop && localRect.height > clickSlop {
             restoreCursorIfNeeded()
             onSelectionComplete?(localRect)
+        } else {
+            cancelOverlay()
         }
         needsDisplay = true
     }

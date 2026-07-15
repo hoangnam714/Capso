@@ -147,6 +147,8 @@ final class AnnotationCanvasNSView: NSView {
         }
     }
     private var dragObjectID: ObjectID?
+    /// Which focus hole is independently selected inside a HighlightFocusObject.
+    private var selectedFocusIndex: Int?
     /// True when the current drag is repositioning an existing object (any tool).
     private var isMovingObject = false
     private var activeResizeHandle: ResizeHandle?
@@ -208,13 +210,60 @@ final class AnnotationCanvasNSView: NSView {
     // MARK: - Handle Hit Testing
 
     private func supportsIndependentEdgeResize(for object: any AnnotationObject) -> Bool {
-        if object is RectangleObject || object is EllipseObject || object is ImageObject {
+        if object is RectangleObject || object is EllipseObject || object is ImageObject
+            || object is HighlightFocusObject {
             return true
         }
         if let text = object as? TextObject {
             return text.boxSize != nil
         }
         return false
+    }
+
+    /// Bounds used for selection chrome / handles. Highlight Focus edits one hole at a time.
+    private func selectionBounds(for object: any AnnotationObject) -> CGRect {
+        if let spotlight = object as? HighlightFocusObject {
+            synchronizeSelectedFocusIndex(with: spotlight)
+            if let index = selectedFocusIndex, let rect = spotlight.focusRect(at: index) {
+                return rect
+            }
+        }
+        return object.bounds
+    }
+
+    private func synchronizeSelectedFocusIndex(with spotlight: HighlightFocusObject) {
+        guard !spotlight.focusRects.isEmpty else {
+            selectedFocusIndex = nil
+            return
+        }
+        if let index = selectedFocusIndex, spotlight.focusRects.indices.contains(index) {
+            return
+        }
+        selectedFocusIndex = spotlight.focusRects.count - 1
+    }
+
+    private func selectFocusRegion(in spotlight: HighlightFocusObject, at point: CGPoint) {
+        selectedFocusIndex = spotlight.focusIndex(at: point, threshold: 8)
+            ?? spotlight.focusRects.indices.last
+    }
+
+    /// Deletes the active focus hole, or the whole spotlight when none remain.
+    private func removeSelectedFocusRegion(in doc: AnnotationDocument, spotlight: HighlightFocusObject) {
+        synchronizeSelectedFocusIndex(with: spotlight)
+        guard let index = selectedFocusIndex else {
+            doc.removeObject(id: spotlight.id)
+            selectedFocusIndex = nil
+            return
+        }
+        if spotlight.focusRects.count <= 1 {
+            doc.removeObject(id: spotlight.id)
+            selectedFocusIndex = nil
+            return
+        }
+        doc.beginDrag()
+        spotlight.removeFocusRect(at: index)
+        selectedFocusIndex = min(index, spotlight.focusRects.count - 1)
+        doc.selectObject(id: spotlight.id)
     }
 
     private func handleHitTest(point: CGPoint, object: any AnnotationObject) -> ResizeHandle? {
@@ -224,7 +273,8 @@ final class AnnotationCanvasNSView: NSView {
 
         let r = max(10 / max(zoomScale, 0.1), handleRadius + 4)
         let includeEdgeHandles = supportsIndependentEdgeResize(for: object)
-        for (handle, center) in selectionHandleCenters(for: object.bounds, includeEdgeHandles: includeEdgeHandles) {
+        let bounds = selectionBounds(for: object)
+        for (handle, center) in selectionHandleCenters(for: bounds, includeEdgeHandles: includeEdgeHandles) {
             if hypot(point.x - center.x, point.y - center.y) <= r {
                 return handle
             }
@@ -255,7 +305,7 @@ final class AnnotationCanvasNSView: NSView {
             return CGPoint(x: path.end.x + offset * 0.5, y: path.end.y - offset)
         }
 
-        let frame = selectionFrame(for: object.bounds)
+        let frame = selectionFrame(for: selectionBounds(for: object))
         return CGPoint(x: frame.maxX + offset, y: frame.minY - offset)
     }
 
@@ -437,7 +487,40 @@ final class AnnotationCanvasNSView: NSView {
         }
 
         if let doc = document {
-            for object in doc.objects {
+            // Spotlight always under other annotations (matches AnnotationRenderer).
+            let highlightFocus = doc.objects.compactMap { $0 as? HighlightFocusObject }
+            let foreground = doc.objects.filter { !($0 is HighlightFocusObject) }
+            let previewFocusRect = highlightFocusPreviewRect()
+            if highlightFocus.isEmpty, let previewFocusRect {
+                drawHighlightFocusOverlay(
+                    ctx: ctx,
+                    canvasRect: CGRect(origin: .zero, size: doc.imageSize),
+                    focusRects: [previewFocusRect],
+                    cornerRadius: max(0, currentStyle.lineWidth),
+                    color: currentStyle.color.cgColor,
+                    opacity: currentStyle.opacity > 0 ? currentStyle.opacity : HighlightFocusObject.defaultDimOpacity
+                )
+                strokeHighlightFocusPreview(ctx: ctx, focus: previewFocusRect, cornerRadius: max(0, currentStyle.lineWidth))
+            } else {
+                for object in highlightFocus {
+                    var focusRects = object.focusRects
+                    if let previewFocusRect {
+                        focusRects.append(previewFocusRect)
+                    }
+                    drawHighlightFocusOverlay(
+                        ctx: ctx,
+                        canvasRect: object.canvasRect,
+                        focusRects: focusRects,
+                        cornerRadius: object.cornerRadius,
+                        color: object.style.color.cgColor,
+                        opacity: object.style.opacity
+                    )
+                    if let previewFocusRect {
+                        strokeHighlightFocusPreview(ctx: ctx, focus: previewFocusRect, cornerRadius: object.cornerRadius)
+                    }
+                }
+            }
+            for object in foreground {
                 // While a TextObject is being re-edited inline, hide it from
                 // the canvas render so we don't double-draw the text under
                 // the live editor.
@@ -462,15 +545,23 @@ final class AnnotationCanvasNSView: NSView {
                     drawPathSelectionHandles(ctx: ctx, object: pathObject)
                     drawDeleteButton(ctx: ctx, object: pathObject)
                 } else {
-                    let includeEdgeHandles = supportsIndependentEdgeResize(for: selected)
-                    drawSelectionHandles(ctx: ctx, bounds: selected.bounds, includeEdgeHandles: includeEdgeHandles)
-                    drawDeleteButton(ctx: ctx, object: selected)
+                    let bounds = selectionBounds(for: selected)
+                    if !bounds.isNull, bounds.width > 0.5, bounds.height > 0.5 {
+                        let includeEdgeHandles = supportsIndependentEdgeResize(for: selected)
+                        drawSelectionHandles(
+                            ctx: ctx,
+                            bounds: bounds,
+                            includeEdgeHandles: includeEdgeHandles
+                        )
+                        drawDeleteButton(ctx: ctx, object: selected)
+                    }
                 }
             }
 
             if let start = dragStart, let current = dragCurrent,
                isDragging, activeResizeHandle == nil, !isMovingObject,
-               currentTool != .select, currentTool != .freehand, currentTool != .text, currentTool != .counter, currentTool != .highlighter {
+               currentTool != .select, currentTool != .freehand, currentTool != .text,
+               currentTool != .counter, currentTool != .highlighter, currentTool != .highlightFocus {
                 drawPreview(ctx: ctx, from: start, to: current)
             }
         }
@@ -642,8 +733,9 @@ final class AnnotationCanvasNSView: NSView {
 
         let scale = max(zoomScale, 0.1)
         let hs: CGFloat = 4 / scale
-        let lw: CGFloat = 1 / scale
-        let selColor = NSColor.controlAccentColor.withAlphaComponent(0.78).cgColor
+        let lw: CGFloat = 1.25 / scale
+        let selColor = NSColor.controlAccentColor.withAlphaComponent(0.85).cgColor
+        let handleFill = NSColor.white.withAlphaComponent(0.96).cgColor
         let frame = selectionFrame(for: bounds)
 
         // Selection border
@@ -653,10 +745,10 @@ final class AnnotationCanvasNSView: NSView {
         ctx.stroke(frame)
         ctx.setLineDash(phase: 0, lengths: [])
 
-        // Resize handles
+        // Resize handles — white fill stays readable on dark Highlight Focus overlays.
         for (_, center) in selectionHandleCenters(for: bounds, includeEdgeHandles: includeEdgeHandles) {
             let r = CGRect(x: center.x - hs, y: center.y - hs, width: hs * 2, height: hs * 2)
-            ctx.setFillColor(NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor)
+            ctx.setFillColor(handleFill)
             ctx.fillEllipse(in: r)
             ctx.setStrokeColor(selColor)
             ctx.setLineWidth(lw)
@@ -776,8 +868,70 @@ final class AnnotationCanvasNSView: NSView {
                 ctx.fillEllipse(in: rect)
             }
         case .pixelate: ctx.setFillColor(CGColor(gray: 0.5, alpha: 0.3)); ctx.fill(rect)
+        case .highlightFocus:
+            break // Drawn separately so existing focus holes stay visible.
         default: break
         }
+        ctx.restoreGState()
+    }
+
+    private func highlightFocusPreviewRect() -> CGRect? {
+        guard currentTool == .highlightFocus,
+              let start = dragStart, let current = dragCurrent,
+              isDragging, activeResizeHandle == nil, !isMovingObject else {
+            return nil
+        }
+        let focus = CGRect(
+            x: min(start.x, current.x),
+            y: min(start.y, current.y),
+            width: abs(current.x - start.x),
+            height: abs(current.y - start.y)
+        )
+        guard focus.width > 1, focus.height > 1 else { return nil }
+        return focus
+    }
+
+    private func drawHighlightFocusOverlay(
+        ctx: CGContext,
+        canvasRect: CGRect,
+        focusRects: [CGRect],
+        cornerRadius: CGFloat,
+        color: CGColor,
+        opacity: CGFloat
+    ) {
+        guard canvasRect.width > 0, canvasRect.height > 0 else { return }
+        ctx.saveGState()
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        ctx.setFillColor(color.copy(alpha: opacity) ?? CGColor(gray: 0, alpha: opacity))
+        ctx.fill(canvasRect)
+        if !focusRects.isEmpty {
+            ctx.setBlendMode(.clear)
+            let radius = min(cornerRadius, min(canvasRect.width, canvasRect.height) / 2)
+            for rect in focusRects where rect.width > 0 && rect.height > 0 {
+                let r = min(radius, min(rect.width, rect.height) / 2)
+                if r > 0.5 {
+                    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil))
+                } else {
+                    ctx.addRect(rect)
+                }
+                ctx.fillPath()
+            }
+        }
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
+    }
+
+    private func strokeHighlightFocusPreview(ctx: CGContext, focus: CGRect, cornerRadius: CGFloat) {
+        let radius = min(cornerRadius, min(focus.width, focus.height) / 2)
+        ctx.saveGState()
+        ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.85))
+        ctx.setLineWidth(1.25 / max(zoomScale, 0.1))
+        if radius > 0.5 {
+            ctx.addPath(CGPath(roundedRect: focus, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        } else {
+            ctx.addRect(focus)
+        }
+        ctx.strokePath()
         ctx.restoreGState()
     }
 
@@ -841,7 +995,12 @@ final class AnnotationCanvasNSView: NSView {
 
         if let selected = doc.selectedObject,
            deleteButtonHitTest(point: point, object: selected) {
-            doc.removeObject(id: selected.id)
+            if let spotlight = selected as? HighlightFocusObject {
+                removeSelectedFocusRegion(in: doc, spotlight: spotlight)
+            } else {
+                doc.removeObject(id: selected.id)
+                selectedFocusIndex = nil
+            }
             isDragging = false
             dragStart = nil
             dragCurrent = nil
@@ -854,7 +1013,7 @@ final class AnnotationCanvasNSView: NSView {
         if let selected = doc.selectedObject,
            let handle = handleHitTest(point: point, object: selected) {
             activeResizeHandle = handle
-            resizeOriginalBounds = selected.bounds
+            resizeOriginalBounds = selectionBounds(for: selected)
             resizeOriginalFreehandPoints = (selected as? FreehandObject)?.points
             if let arrow = selected as? ArrowObject {
                 resizeOriginalEndpoints = (arrow.start, arrow.end)
@@ -883,6 +1042,11 @@ final class AnnotationCanvasNSView: NSView {
         }
 
         if let obj = doc.objectAt(point: point) {
+            if let spotlight = obj as? HighlightFocusObject {
+                selectFocusRegion(in: spotlight, at: point)
+            } else {
+                selectedFocusIndex = nil
+            }
             doc.selectObject(id: obj.id)
             dragObjectID = obj.id
             doc.beginDrag()
@@ -894,6 +1058,7 @@ final class AnnotationCanvasNSView: NSView {
 
         if currentTool == .select {
             doc.clearSelection()
+            selectedFocusIndex = nil
             dragObjectID = nil
         } else if currentTool == .freehand || currentTool == .highlighter {
             // Smart highlighter: if starting on a text line, snap to it.
@@ -970,7 +1135,12 @@ final class AnnotationCanvasNSView: NSView {
                          dragStart: start, dragCurrent: point)
         } else if isMovingObject, let objID = dragObjectID, let start = dragStart {
             let delta = CGSize(width: point.x - start.x, height: point.y - start.y)
-            document?.moveObject(id: objID, by: delta)
+            if let spotlight = document?.objects.first(where: { $0.id == objID }) as? HighlightFocusObject,
+               let index = selectedFocusIndex {
+                spotlight.moveFocusRect(at: index, by: delta)
+            } else {
+                document?.moveObject(id: objID, by: delta)
+            }
             dragStart = point
         } else if currentTool == .freehand || currentTool == .highlighter {
             if let snap = highlighterSnapRect {
@@ -1160,7 +1330,7 @@ final class AnnotationCanvasNSView: NSView {
             guard let endpoints = resizeOriginalEndpoints else { return }
             line.start = scaledPoint(endpoints.start, from: originalBounds, to: newRect)
             line.end = scaledPoint(endpoints.end, from: originalBounds, to: newRect)
-        } else if let freehand = obj as? FreehandObject {
+        }         else if let freehand = obj as? FreehandObject {
             // Scale all points from original bounds to new bounds
             guard originalBounds.width > 0, originalBounds.height > 0,
                   let originalPoints = resizeOriginalFreehandPoints else { return }
@@ -1171,6 +1341,40 @@ final class AnnotationCanvasNSView: NSView {
                 freehand.points[i].y = newRect.origin.y + (originalPoints[i].y - originalBounds.origin.y) * scaleY
             }
             freehand.invalidateCache()
+        } else if let spotlight = obj as? HighlightFocusObject {
+            if let index = selectedFocusIndex {
+                spotlight.setFocusRect(newRect, at: index)
+            } else {
+                spotlight.replaceBounds(with: newRect)
+            }
+        }
+    }
+
+    private func commitHighlightFocusRegion(_ rect: CGRect, in doc: AnnotationDocument) {
+        let canvasRect = CGRect(origin: .zero, size: doc.imageSize)
+        var style = currentStyle
+        if style.opacity <= 0 || style.opacity >= 1 {
+            style.opacity = HighlightFocusObject.defaultDimOpacity
+        }
+        let corner = max(0, currentStyle.lineWidth)
+
+        if let existing = doc.highlightFocusObject {
+            doc.beginDrag()
+            existing.addFocusRect(rect)
+            existing.canvasRect = canvasRect
+            existing.cornerRadius = corner
+            existing.style = style
+            selectedFocusIndex = existing.focusRects.count - 1
+            doc.selectObject(id: existing.id)
+        } else {
+            let spotlight = HighlightFocusObject(
+                canvasRect: canvasRect,
+                focusRects: [rect],
+                cornerRadius: corner,
+                style: style
+            )
+            selectedFocusIndex = 0
+            doc.addObject(spotlight)
         }
     }
 
@@ -1293,6 +1497,16 @@ final class AnnotationCanvasNSView: NSView {
                     redaction.style = currentStyle
                     doc.addObject(redaction)
                 }
+            case .highlightFocus:
+                let rect = CGRect(
+                    x: min(start.x, end.x),
+                    y: min(start.y, end.y),
+                    width: abs(end.x - start.x),
+                    height: abs(end.y - start.y)
+                )
+                if rect.width > 5 / zoomScale && rect.height > 5 / zoomScale {
+                    commitHighlightFocusRegion(rect, in: doc)
+                }
             case .counter:
                 let number = nextCounterNumber()
                 let counter = CounterObject(center: end, number: number, radius: currentStyle.lineWidth, style: currentStyle)
@@ -1321,7 +1535,13 @@ final class AnnotationCanvasNSView: NSView {
         }
 
         if event.keyCode == 51 || event.keyCode == 117 {
-            document?.removeSelected()
+            if let doc = document,
+               let spotlight = doc.selectedObject as? HighlightFocusObject {
+                removeSelectedFocusRegion(in: doc, spotlight: spotlight)
+            } else {
+                document?.removeSelected()
+                selectedFocusIndex = nil
+            }
             needsDisplay = true
             onDocumentChanged?()
             return

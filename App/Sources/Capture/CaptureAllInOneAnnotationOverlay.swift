@@ -389,6 +389,7 @@ final class AllInOneAnnotationSession: ObservableObject {
     @Published var textAlignment: AnnotationTextAlignment
     @Published var penStyle: PenStyle
     @Published var lineWidth: CGFloat
+    @Published var highlightFocusOpacity: CGFloat
     @Published var strokePattern: StrokePattern
     @Published var redactionMode: RedactionMode
     @Published var isEditingText = false
@@ -423,8 +424,24 @@ final class AllInOneAnnotationSession: ObservableObject {
         self.textAlignment = Self.storedTextAlignment()
         self.penStyle = Self.storedPenStyle()
         self.lineWidth = Self.storedWidth(for: Self.storedTool())
+        self.highlightFocusOpacity = Self.storedHighlightFocusOpacity()
         self.strokePattern = Self.storedStrokePattern()
         self.redactionMode = Self.storedRedactionMode()
+
+        if self.currentTool == .highlightFocus {
+            if self.currentColor != .black {
+                self.currentColor = .black
+            }
+            self.document.ensureHighlightFocusOverlay(
+                cornerRadius: self.lineWidth,
+                style: AnnotationKit.StrokeStyle(
+                    color: self.currentColor,
+                    lineWidth: 1,
+                    opacity: self.highlightFocusOpacity,
+                    filled: true
+                )
+            )
+        }
 
         Task { [weak self] in
             guard let self else { return }
@@ -439,11 +456,20 @@ final class AllInOneAnnotationSession: ObservableObject {
     }
 
     var currentStyle: AnnotationKit.StrokeStyle {
-        AnnotationKit.StrokeStyle(
+        let opacity: CGFloat
+        switch currentTool {
+        case .highlighter:
+            opacity = 0.35
+        case .highlightFocus:
+            opacity = highlightFocusOpacity
+        default:
+            opacity = 1.0
+        }
+        return AnnotationKit.StrokeStyle(
             color: currentColor,
             lineWidth: lineWidth,
-            opacity: currentTool == .highlighter ? 0.35 : 1.0,
-            filled: filled,
+            opacity: opacity,
+            filled: filled || currentTool == .highlightFocus,
             pattern: strokePattern
         )
     }
@@ -483,10 +509,32 @@ final class AllInOneAnnotationSession: ObservableObject {
     }
 
     func switchTool(_ newTool: AnnotationTool) {
+        let oldTool = currentTool
         document.clearSelection()
         persistWidth(lineWidth, for: currentTool)
         currentTool = newTool
         lineWidth = Self.storedWidth(for: newTool)
+        if oldTool == .highlightFocus, newTool != .highlightFocus {
+            document.removeEmptyHighlightFocusOverlay()
+            markChanged()
+        }
+        if newTool == .highlightFocus {
+            if currentColor != .black && document.highlightFocusObject == nil {
+                currentColor = .black
+                UserDefaults.standard.set(AnnotationColor.black.rawValue, forKey: "annotationLastColor")
+            }
+            highlightFocusOpacity = Self.storedHighlightFocusOpacity()
+            document.ensureHighlightFocusOverlay(
+                cornerRadius: lineWidth,
+                style: AnnotationKit.StrokeStyle(
+                    color: currentColor,
+                    lineWidth: 1,
+                    opacity: highlightFocusOpacity,
+                    filled: true
+                )
+            )
+            markChanged()
+        }
         UserDefaults.standard.set(newTool.rawValue, forKey: "annotationLastTool")
         onRequestCanvasFocus?()
     }
@@ -498,6 +546,20 @@ final class AllInOneAnnotationSession: ObservableObject {
     }
 
     func updateSelectedStyle() {
+        if let spotlight = document.highlightFocusObject,
+           currentTool == .highlightFocus || document.selectedObject is HighlightFocusObject {
+            spotlight.cornerRadius = lineWidth
+            spotlight.style = AnnotationKit.StrokeStyle(
+                color: currentColor,
+                lineWidth: 1,
+                opacity: highlightFocusOpacity,
+                filled: true
+            )
+            refreshTrigger += 1
+            if document.selectedObject is HighlightFocusObject || document.selectedObject == nil {
+                return
+            }
+        }
         if let obj = document.selectedObject {
             if let pixelate = obj as? PixelateObject {
                 pixelate.blockSize = lineWidth
@@ -523,11 +585,19 @@ final class AllInOneAnnotationSession: ObservableObject {
             } else if let freehand = obj as? FreehandObject {
                 freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
                 freehand.style = currentStyle
+            } else if obj is HighlightFocusObject {
+                // Already handled above.
             } else {
                 obj.style = currentStyle
             }
             refreshTrigger += 1
         }
+    }
+
+    func persistHighlightFocusOpacity(_ opacity: CGFloat) {
+        highlightFocusOpacity = opacity
+        UserDefaults.standard.set(Double(opacity), forKey: "annotationHighlightFocusOpacity")
+        updateSelectedStyle()
     }
 
     private func renderedOutputImage() -> CGImage? {
@@ -575,6 +645,8 @@ final class AllInOneAnnotationSession: ObservableObject {
             UserDefaults.standard.set(Double(width), forKey: "annotationCounterSize")
         case .highlighter:
             UserDefaults.standard.set(Double(width), forKey: "annotationHighlighterWidth")
+        case .highlightFocus:
+            UserDefaults.standard.set(Double(width), forKey: "annotationHighlightFocusCornerRadius")
         case .text:
             UserDefaults.standard.set(Double(width), forKey: "annotationTextFontSize")
         default:
@@ -635,6 +707,11 @@ final class AllInOneAnnotationSession: ObservableObject {
         CGFloat(UserDefaults.standard.object(forKey: "annotationTextFontSize") as? Double ?? 48)
     }
 
+    private static func storedHighlightFocusOpacity() -> CGFloat {
+        CGFloat(UserDefaults.standard.object(forKey: "annotationHighlightFocusOpacity") as? Double
+            ?? Double(HighlightFocusObject.defaultDimOpacity))
+    }
+
     private static func storedWidth(for tool: AnnotationTool) -> CGFloat {
         switch tool {
         case .pixelate:
@@ -643,6 +720,9 @@ final class AllInOneAnnotationSession: ObservableObject {
             return CGFloat(UserDefaults.standard.object(forKey: "annotationCounterSize") as? Double ?? 20)
         case .highlighter:
             return CGFloat(UserDefaults.standard.object(forKey: "annotationHighlighterWidth") as? Double ?? 20)
+        case .highlightFocus:
+            return CGFloat(UserDefaults.standard.object(forKey: "annotationHighlightFocusCornerRadius") as? Double
+                ?? Double(HighlightFocusObject.defaultCornerRadius))
         case .text:
             return storedTextFontSize()
         default:
@@ -866,7 +946,7 @@ private struct AllInOneAnnotationToolbarView: View {
     }
 
     private var overflowTools: [AnnotationTool] {
-        [.ellipse, .pixelate, .counter, .highlighter]
+        [.ellipse, .pixelate, .counter, .highlighter, .highlightFocus]
     }
 
     private var compactStatus: some View {
@@ -894,6 +974,35 @@ private struct AllInOneAnnotationToolbarView: View {
                         session.updateSelectedStyle()
                     }
                 ))
+            } else if session.currentTool == .highlightFocus {
+                LabeledSlider(
+                    title: "Dim",
+                    value: Binding(
+                        get: { session.highlightFocusOpacity },
+                        set: { session.persistHighlightFocusOpacity($0) }
+                    ),
+                    range: 0.15...0.90,
+                    step: 0.05,
+                    width: 80,
+                    valueText: "\(Int(session.highlightFocusOpacity * 100))%",
+                    emphasizesOnDark: true
+                )
+                LabeledSlider(
+                    title: "Radius",
+                    value: Binding(
+                        get: { session.lineWidth },
+                        set: {
+                            session.lineWidth = $0
+                            session.persistWidth($0, for: .highlightFocus)
+                            session.updateSelectedStyle()
+                        }
+                    ),
+                    range: 0...40,
+                    step: 1,
+                    width: 80,
+                    valueText: "\(Int(session.lineWidth))",
+                    emphasizesOnDark: true
+                )
             } else if !(session.currentTool == .pixelate && session.redactionMode == .solid) {
                 Slider(value: Binding(
                     get: { session.lineWidth },
@@ -941,6 +1050,7 @@ private struct AllInOneAnnotationToolbarView: View {
                 && session.currentTool != .arrow
                 && session.currentTool != .line
                 && session.currentTool != .highlighter
+                && session.currentTool != .highlightFocus
                 && session.currentTool != .freehand
                 && session.currentTool != .pixelate
                 && !isFontSizeMode {
@@ -1327,6 +1437,9 @@ private struct AllInOneAnnotationToolbarView: View {
     }
 
     private var compactValueLabel: String {
+        if session.currentTool == .highlightFocus {
+            return "\(Int(session.highlightFocusOpacity * 100))%"
+        }
         if session.currentTool == .pixelate {
             return "\(Int(session.lineWidth))px"
         }
@@ -1500,6 +1613,7 @@ private struct AllInOneAnnotationToolbarView: View {
         case .pixelate: return "eye.slash.fill"
         case .counter: return "number.circle.fill"
         case .highlighter: return "highlighter"
+        case .highlightFocus: return "circle.lefthalf.filled"
         }
     }
 
@@ -1515,6 +1629,7 @@ private struct AllInOneAnnotationToolbarView: View {
         case .pixelate: return "Pixelate / Blur"
         case .counter: return "Counter"
         case .highlighter: return "Highlighter"
+        case .highlightFocus: return "Highlight Focus"
         }
     }
 
@@ -1530,6 +1645,7 @@ private struct AllInOneAnnotationToolbarView: View {
         case .pixelate: return String(localized: "Pixel")
         case .counter: return String(localized: "Count")
         case .highlighter: return String(localized: "Mark")
+        case .highlightFocus: return String(localized: "Focus")
         }
     }
 }

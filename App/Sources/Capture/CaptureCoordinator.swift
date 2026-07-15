@@ -269,11 +269,16 @@ final class CaptureCoordinator {
         }
     }
 
-    /// Captures every connected display as separate screenshots.
+    /// Captures every connected display and stitches them into one image that
+    /// matches the virtual desktop layout (including differently sized monitors).
     func captureAllDisplays() {
         let screens = Self.uniqueScreens(from: NSScreen.screens)
         guard !screens.isEmpty else {
             captureFullscreen()
+            return
+        }
+        if screens.count == 1, let only = screens.first {
+            captureFullscreen(displayID: only.displayID, screen: only)
             return
         }
 
@@ -281,17 +286,90 @@ final class CaptureCoordinator {
         rememberSourceApplication()
 
         Task { @MainActor in
-            var results: [CaptureResult] = []
+            var captured: [(screen: NSScreen, image: CGImage)] = []
+            captured.reserveCapacity(screens.count)
             for screen in screens {
                 if let result = await self.captureFullscreenResult(for: screen) {
-                    results.append(result)
+                    captured.append((screen, result.image))
                 }
             }
             guard self.isCurrentSession(session) else { return }
-            for result in results {
-                self.handleCaptureResult(result)
+            guard let stitched = Self.stitchedFullscreenResult(from: captured) else {
+                // Fall back to per-display results if compositing fails.
+                for item in captured {
+                    self.handleCaptureResult(
+                        CaptureResult(
+                            image: item.image,
+                            mode: .fullscreen,
+                            captureRect: CGDisplayBounds(item.screen.displayID),
+                            displayID: item.screen.displayID
+                        )
+                    )
+                }
+                return
             }
+            self.handleCaptureResult(stitched)
         }
+    }
+
+    /// Composite fullscreen captures into one image covering the union of the
+    /// participating screen frames in AppKit bottom-left space.
+    private static func stitchedFullscreenResult(
+        from captured: [(screen: NSScreen, image: CGImage)]
+    ) -> CaptureResult? {
+        guard !captured.isEmpty else { return nil }
+        if captured.count == 1, let only = captured.first {
+            return CaptureResult(
+                image: only.image,
+                mode: .fullscreen,
+                captureRect: CGDisplayBounds(only.screen.displayID),
+                displayID: only.screen.displayID
+            )
+        }
+
+        let desktop = CaptureDisplayGeometry.virtualDesktopBounds(
+            screenFrames: captured.map(\.screen.frame)
+        )
+        guard !desktop.isNull, desktop.width > 0, desktop.height > 0 else { return nil }
+
+        var slices: [MultiDisplayCaptureSlice] = []
+        slices.reserveCapacity(captured.count)
+        for item in captured {
+            let frame = item.screen.frame
+            guard frame.width > 0, frame.height > 0 else { continue }
+            let scale = CGFloat(item.image.width) / frame.width
+            slices.append(
+                MultiDisplayCaptureSlice(
+                    image: item.image,
+                    originInSelection: CGPoint(
+                        x: frame.minX - desktop.minX,
+                        y: frame.minY - desktop.minY
+                    ),
+                    sizeInPoints: frame.size,
+                    scale: scale > 0 ? scale : 1
+                )
+            )
+        }
+        guard !slices.isEmpty else { return nil }
+
+        let outputScale = slices.map(\.scale).max() ?? 1
+        guard let image = MultiDisplayImageStitcher.stitch(
+            slices: slices,
+            selectionSize: desktop.size,
+            outputScale: outputScale
+        ) else {
+            return nil
+        }
+
+        let mainDisplayID = NSScreen.main?.displayID
+        let primary = captured.first(where: { $0.screen.displayID == mainDisplayID })?.screen
+            ?? captured[0].screen
+        return CaptureResult(
+            image: image,
+            mode: .fullscreen,
+            captureRect: CGRect(origin: .zero, size: desktop.size),
+            displayID: primary.displayID
+        )
     }
 
     /// Capture one display, preferring the synchronous CGDisplayCreateImage path

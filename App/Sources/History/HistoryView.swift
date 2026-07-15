@@ -5,26 +5,103 @@ import HistoryKit
 struct HistoryView: View {
     let coordinator: HistoryCoordinator
 
-    private var groupedEntries: [(String, [HistoryEntry])] {
+    var body: some View {
+        VStack(spacing: 0) {
+            filterBar
+            Divider()
+
+            if coordinator.entries.isEmpty {
+                emptyState
+            } else {
+                GeometryReader { geo in
+                    let columnCount = Self.columnCount(for: geo.size.width)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            ForEach(Self.groupedSections(from: coordinator.entries)) { section in
+                                sectionHeader(title: section.title, count: section.entries.count)
+
+                                // Row-based laziness: LazyVGrid nested in LazyVStack
+                                // expands every cell in a section, which freezes with
+                                // large histories. Emit one lazy row at a time instead.
+                                ForEach(section.rows(columnCount: columnCount)) { row in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        ForEach(row.entries) { entry in
+                                            HistoryItemView(entry: entry, coordinator: coordinator)
+                                                .frame(maxWidth: .infinity)
+                                        }
+                                        if row.entries.count < columnCount {
+                                            ForEach(0..<(columnCount - row.entries.count), id: \.self) { _ in
+                                                Color.clear.frame(maxWidth: .infinity)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            }
+
+            Divider()
+            statusBar
+        }
+        .onAppear { coordinator.loadEntries() }
+    }
+
+    // MARK: - Grouping
+
+    private struct HistorySection: Identifiable {
+        let id: String
+        let title: String
+        let entries: [HistoryEntry]
+
+        func rows(columnCount: Int) -> [HistoryRow] {
+            let columns = max(1, columnCount)
+            return stride(from: 0, to: entries.count, by: columns).map { start in
+                let end = min(start + columns, entries.count)
+                let slice = Array(entries[start..<end])
+                return HistoryRow(
+                    id: "\(id)-\(start)",
+                    entries: slice
+                )
+            }
+        }
+    }
+
+    private struct HistoryRow: Identifiable {
+        let id: String
+        let entries: [HistoryEntry]
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
+        return formatter
+    }()
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter
+    }()
+
+    private static func groupedSections(from entries: [HistoryEntry]) -> [HistorySection] {
         let calendar = Calendar.current
         let now = Date()
         var groups: [String: [HistoryEntry]] = [:]
         var order: [String] = []
 
-        for entry in coordinator.entries {
+        for entry in entries {
             let key: String
             if calendar.isDateInToday(entry.createdAt) {
                 key = String(localized: "Today")
             } else if calendar.isDateInYesterday(entry.createdAt) {
                 key = String(localized: "Yesterday")
             } else if let daysAgo = calendar.dateComponents([.day], from: entry.createdAt, to: now).day, daysAgo < 7 {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "EEEE" // Day of week
-                key = formatter.string(from: entry.createdAt)
+                key = dayFormatter.string(from: entry.createdAt)
             } else {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "MMM d, yyyy"
-                key = formatter.string(from: entry.createdAt)
+                key = dateFormatter.string(from: entry.createdAt)
             }
 
             if groups[key] == nil {
@@ -35,35 +112,13 @@ struct HistoryView: View {
 
         return order.compactMap { key in
             guard let entries = groups[key] else { return nil }
-            return (key, entries)
+            return HistorySection(id: key, title: key, entries: entries)
         }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Filter bar
-            filterBar
-            Divider()
-
-            // Content
-            if coordinator.entries.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(groupedEntries, id: \.0) { section, entries in
-                            sectionView(title: section, count: entries.count, entries: entries)
-                        }
-                    }
-                    .padding(16)
-                }
-            }
-
-            // Status bar
-            Divider()
-            statusBar
-        }
-        .onAppear { coordinator.loadEntries() }
+    private static func columnCount(for width: CGFloat) -> Int {
+        let contentWidth = max(0, width - 32)
+        return max(1, Int(contentWidth / 177))
     }
 
     // MARK: - Filter Bar
@@ -127,32 +182,21 @@ struct HistoryView: View {
 
     // MARK: - Section
 
-    private func sectionView(title: String, count: Int, entries: [HistoryEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
+    private func sectionHeader(title: String, count: Int) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.5)
 
-                Rectangle()
-                    .fill(.quaternary)
-                    .frame(height: 0.5)
+            Rectangle()
+                .fill(.quaternary)
+                .frame(height: 0.5)
 
-                Text("\(count)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-            }
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 165), spacing: 12)],
-                spacing: 12
-            ) {
-                ForEach(entries) { entry in
-                    HistoryItemView(entry: entry, coordinator: coordinator)
-                }
-            }
+            Text("\(count)")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
         }
     }
 

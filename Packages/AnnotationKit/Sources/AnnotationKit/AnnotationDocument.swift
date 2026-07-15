@@ -33,8 +33,50 @@ public final class AnnotationDocument {
             let maxNumber = objects.compactMap { ($0 as? CounterObject)?.number }.max() ?? 0
             counter.number = maxNumber + 1
         }
-        objects.append(object)
+        // Spotlight overlays must stay under other annotations for hit-testing
+        // and draw order (renderer also draws them in a first pass).
+        if object is HighlightFocusObject {
+            objects.insert(object, at: 0)
+        } else {
+            objects.append(object)
+        }
         selectedObjectID = object.id
+    }
+
+    /// Existing spotlight object, if any (at most one is expected per document).
+    public var highlightFocusObject: HighlightFocusObject? {
+        objects.compactMap { $0 as? HighlightFocusObject }.first
+    }
+
+    /// Ensures a dim overlay exists immediately when Highlight Focus is selected.
+    /// Empty focus holes still dim the whole canvas. Does not change selection or undo.
+    public func ensureHighlightFocusOverlay(
+        cornerRadius: CGFloat,
+        style: StrokeStyle
+    ) {
+        let canvasRect = CGRect(origin: .zero, size: imageSize)
+        if let existing = highlightFocusObject {
+            existing.canvasRect = canvasRect
+            existing.cornerRadius = max(0, cornerRadius)
+            existing.style = style
+            return
+        }
+        let spotlight = HighlightFocusObject(
+            canvasRect: canvasRect,
+            focusRects: [],
+            cornerRadius: cornerRadius,
+            style: style
+        )
+        objects.insert(spotlight, at: 0)
+    }
+
+    /// Drops an unused empty spotlight when leaving the Highlight Focus tool.
+    public func removeEmptyHighlightFocusOverlay() {
+        guard let existing = highlightFocusObject, existing.focusRects.isEmpty else { return }
+        objects.removeAll { $0.id == existing.id }
+        if selectedObjectID == existing.id {
+            selectedObjectID = nil
+        }
     }
 
     public func removeObject(id: ObjectID) {

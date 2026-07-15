@@ -31,7 +31,13 @@ public enum AnnotationRenderer {
         ctx.translateBy(x: 0, y: CGFloat(height))
         ctx.scaleBy(x: 1, y: -1)
 
-        for object in objects {
+        // Spotlight overlays always sit under arrows/text/shapes.
+        let highlightFocus = objects.compactMap { $0 as? HighlightFocusObject }
+        let foreground = objects.filter { !($0 is HighlightFocusObject) }
+        for object in highlightFocus {
+            object.render(in: ctx)
+        }
+        for object in foreground {
             if let pixelate = object as? PixelateObject {
                 pixelate.renderWithSource(in: ctx, sourceImage: sourceImage)
             } else {
