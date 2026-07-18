@@ -36,8 +36,6 @@ struct AnnotationToolbar: View {
     let onRedo: () -> Void
     let onSave: () -> Void
     let onCopy: () -> Void
-    let onShare: () -> Void
-    let onPin: () -> Void
     let onCancel: () -> Void
     let onCrop: () -> Void
     var onInsertImageFromClipboard: (() -> Void)? = nil
@@ -56,20 +54,12 @@ struct AnnotationToolbar: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 12) {
-                toolGroup
-                toolbarDivider
-                colorGroup
-                toolbarDivider
-                strokeGroup
-                toolbarDivider
-                cropGroup
-                toolbarDivider
-                beautifyGroup
-                toolbarDivider
-                undoGroup
-                Spacer()
-                actionGroup
+            // Pick the richest layout that still fits the available width so
+            // small MacBook windows can shrink instead of locking min-width.
+            ViewThatFits(in: .horizontal) {
+                toolbarRow(density: .full)
+                toolbarRow(density: .compact)
+                toolbarRow(density: .minimal)
             }
 
             if isFontSizeMode {
@@ -77,8 +67,9 @@ struct AnnotationToolbar: View {
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .frame(minWidth: 0, maxWidth: .infinity)
         .onHover { hovering in
             if hovering {
                 NSCursor.arrow.set()
@@ -89,20 +80,145 @@ struct AnnotationToolbar: View {
         }
     }
 
-    private var toolGroup: some View {
-        HStack(spacing: 4) {
-            toolButton(.select, icon: "cursorarrow", label: "Select")
-            toolButton(.arrow, icon: "arrow.up.right", label: "Arrow")
-            toolButton(.line, icon: "line.diagonal", label: "Line")
-            toolButton(.rectangle, icon: "rectangle", label: "Rectangle (⌃: square)")
-            toolButton(.ellipse, icon: "circle", label: "Ellipse (⌃: circle)")
-            textToolButton
-            toolButton(.freehand, icon: "pencil.tip", label: "Draw")
-            toolButton(.pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur")
-            toolButton(.counter, icon: "number.circle.fill", label: "Counter")
-            toolButton(.highlighter, icon: "highlighter", label: "Highlighter")
-            toolButton(.highlightFocus, icon: "circle.lefthalf.filled", label: "Highlight Focus")
+    private enum ToolbarDensity {
+        /// All drawing tools inline (preferred).
+        case full
+        /// Same tools as full, but compact color row for mid-width windows.
+        case compact
+        /// Current tool + overflow menu only when the window is very narrow.
+        case minimal
+    }
+
+    private func toolbarRow(density: ToolbarDensity) -> some View {
+        HStack(spacing: density == .minimal ? 8 : 10) {
+            toolsSection(density: density)
             toolbarDivider
+            colorSection(density: density)
+            toolbarDivider
+            strokeGroup
+            toolbarDivider
+            cropGroup
+            toolbarDivider
+            beautifyGroup
+            toolbarDivider
+            undoGroup
+            Spacer(minLength: 4)
+            actionGroup
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func toolsSection(density: ToolbarDensity) -> some View {
+        switch density {
+        case .full, .compact:
+            // Always keep Line / Counter / Highlighter / Focus / Insert visible.
+            HStack(spacing: 4) {
+                ForEach(Self.allToolItems, id: \.tool) { item in
+                    toolItemButton(item)
+                }
+                toolbarDivider
+                insertImageButtons
+            }
+        case .minimal:
+            HStack(spacing: 4) {
+                if let current = Self.allToolItems.first(where: { $0.tool == currentTool }) {
+                    toolItemButton(current)
+                }
+                moreToolsMenu(items: Self.allToolItems, includeInsertImage: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func colorSection(density: ToolbarDensity) -> some View {
+        switch density {
+        case .full:
+            AnnotationColorControls(currentColor: $currentColor)
+        case .compact, .minimal:
+            AnnotationColorControls(
+                currentColor: $currentColor,
+                swatchSize: 16,
+                spacing: 2,
+                compact: density == .minimal
+            )
+        }
+    }
+
+    private struct ToolItem {
+        let tool: AnnotationTool
+        let icon: String
+        let label: LocalizedStringKey
+        var isText: Bool = false
+    }
+
+    private static let allToolItems: [ToolItem] = [
+        ToolItem(tool: .select, icon: "cursorarrow", label: "Select"),
+        ToolItem(tool: .arrow, icon: "arrow.up.right", label: "Arrow"),
+        ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
+        ToolItem(tool: .rectangle, icon: "rectangle", label: "Rectangle (⌃: square)"),
+        ToolItem(tool: .ellipse, icon: "circle", label: "Ellipse (⌃: circle)"),
+        ToolItem(tool: .text, icon: "textformat", label: "Text", isText: true),
+        ToolItem(tool: .freehand, icon: "pencil.tip", label: "Draw"),
+        ToolItem(tool: .pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur"),
+        ToolItem(tool: .counter, icon: "number.circle.fill", label: "Counter"),
+        ToolItem(tool: .highlighter, icon: "highlighter", label: "Highlighter"),
+        ToolItem(tool: .highlightFocus, icon: "circle.lefthalf.filled", label: "Highlight Focus"),
+    ]
+
+    @ViewBuilder
+    private func toolItemButton(_ item: ToolItem) -> some View {
+        if item.isText {
+            textToolButton
+        } else {
+            toolButton(item.tool, icon: item.icon, label: item.label)
+        }
+    }
+
+    private func moreToolsMenu(items: [ToolItem], includeInsertImage: Bool) -> some View {
+        Menu {
+            ForEach(items, id: \.tool) { item in
+                Button {
+                    currentTool = item.tool
+                } label: {
+                    if item.isText {
+                        Text(item.label)
+                    } else {
+                        Label(item.label, systemImage: item.icon)
+                    }
+                }
+            }
+            if includeInsertImage {
+                Divider()
+                Button("Paste Image from Clipboard") {
+                    onInsertImageFromClipboard?()
+                }
+                Button("Insert Image from File…") {
+                    onInsertImageFromFile?()
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(toolbarIconForeground(isActive: isOverflowToolSelected(items)))
+                .frame(width: 30, height: 26)
+                .background(toolbarButtonBackground(isActive: isOverflowToolSelected(items)))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(toolbarButtonStroke)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("More Tools")
+    }
+
+    private func isOverflowToolSelected(_ items: [ToolItem]) -> Bool {
+        // In minimal mode the current tool also has its own button, so only
+        // highlight "More" when that button isn't already showing the same tool.
+        items.contains { $0.tool == currentTool }
+    }
+
+    private var insertImageButtons: some View {
+        HStack(spacing: 4) {
             insertImageButton(
                 icon: "doc.on.clipboard",
                 help: "Paste Image from Clipboard",
@@ -170,10 +286,6 @@ struct AnnotationToolbar: View {
         .help("Text")
     }
 
-    private var colorGroup: some View {
-        AnnotationColorControls(currentColor: $currentColor)
-    }
-
     private var strokeGroup: some View {
         HStack(spacing: 8) {
             if isFontSizeMode {
@@ -186,21 +298,21 @@ struct AnnotationToolbar: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 184)
+                .frame(minWidth: 120, idealWidth: 160, maxWidth: 184)
                 .help("Redaction Mode")
 
                 if redactionMode != .solid {
                     Slider(value: $lineWidth, in: 4...48, step: 2)
-                        .frame(width: 80)
+                        .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
                         .help("Block Size: \(Int(lineWidth))")
                 }
             } else if effectiveSizeTool == .counter {
                 Slider(value: $lineWidth, in: 12...40, step: 1)
-                    .frame(width: 80)
+                    .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
                     .help("Counter Size: \(Int(lineWidth))")
             } else if effectiveSizeTool == .highlighter {
                 Slider(value: $lineWidth, in: 10...100, step: 2)
-                    .frame(width: 80)
+                    .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
                     .help("Highlighter Width: \(Int(lineWidth))")
             } else if effectiveSizeTool == .highlightFocus {
                 LabeledSlider(
@@ -208,7 +320,7 @@ struct AnnotationToolbar: View {
                     value: $highlightFocusOpacity,
                     range: 0.15...0.90,
                     step: 0.05,
-                    width: 80,
+                    width: 64,
                     valueText: "\(Int(highlightFocusOpacity * 100))%"
                 )
                 LabeledSlider(
@@ -216,12 +328,12 @@ struct AnnotationToolbar: View {
                     value: $lineWidth,
                     range: 0...40,
                     step: 1,
-                    width: 80,
+                    width: 64,
                     valueText: "\(Int(lineWidth))"
                 )
             } else if effectiveSizeTool != .select {
                 Slider(value: $lineWidth, in: 1...40, step: 1)
-                    .frame(width: 80)
+                    .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
                     .help("Line Width: \(Int(lineWidth))")
             }
 
@@ -250,6 +362,8 @@ struct AnnotationToolbar: View {
                 .help("Fill Shape")
             }
         }
+        .frame(minWidth: 0)
+        .layoutPriority(-1)
     }
 
     private var showsStrokePatternPicker: Bool {
@@ -356,12 +470,6 @@ struct AnnotationToolbar: View {
 
             copyActionButton
 
-            actionButton(icon: "square.and.arrow.up", help: "Share", action: onShare)
-                .keyboardShortcut("i", modifiers: [.command, .shift])
-
-            actionButton(icon: "pin", help: "Pin", action: onPin)
-                .keyboardShortcut("p", modifiers: .command)
-
             saveActionButton
                 .keyboardShortcut("s", modifiers: .command)
         }
@@ -459,6 +567,8 @@ struct AnnotationToolbar: View {
 
 struct StrokePatternGlyph: View {
     let pattern: StrokePattern
+    var width: CGFloat = 28
+    var height: CGFloat = 14
 
     var body: some View {
         Canvas { context, size in
@@ -470,18 +580,18 @@ struct StrokePatternGlyph: View {
             let style: SwiftUI.StrokeStyle
             switch pattern {
             case .solid:
-                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                style = SwiftUI.StrokeStyle(lineWidth: 2.4, lineCap: .round)
             case .dashed:
-                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [6, 4])
+                style = SwiftUI.StrokeStyle(lineWidth: 2.4, lineCap: .round, dash: [6, 4])
             case .longDashed:
-                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [11, 5])
+                style = SwiftUI.StrokeStyle(lineWidth: 2.4, lineCap: .round, dash: [11, 5])
             case .dotted:
-                style = SwiftUI.StrokeStyle(lineWidth: 2.6, lineCap: .round, dash: [0.1, 4.5])
+                style = SwiftUI.StrokeStyle(lineWidth: 2.8, lineCap: .round, dash: [0.1, 4.5])
             case .dashDot:
-                style = SwiftUI.StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [7, 3.5, 0.1, 3.5])
+                style = SwiftUI.StrokeStyle(lineWidth: 2.4, lineCap: .round, dash: [7, 3.5, 0.1, 3.5])
             }
             context.stroke(path, with: .foreground, style: style)
         }
-        .frame(width: 28, height: 14)
+        .frame(width: width, height: height)
     }
 }

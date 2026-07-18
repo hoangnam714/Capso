@@ -75,35 +75,74 @@ struct StrokePatternPicker: View {
     /// When true, use light-on-dark chrome (inline / all-in-one toolbars).
     var emphasizesOnDark: Bool = false
 
+    @State private var isPresented = false
+
     var body: some View {
-        HStack(spacing: 2) {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                StrokePatternGlyph(pattern: pattern, width: 36, height: 14)
+                    .foregroundStyle(emphasizesOnDark ? Color.white : Color.primary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(emphasizesOnDark ? Color.white.opacity(0.7) : Color.secondary)
+            }
+            .frame(width: 52, height: 26)
+            .background(optionBackground(isSelected: true))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(
+                        Color.accentColor.opacity(emphasizesOnDark ? 0.9 : 0.85),
+                        lineWidth: 1.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(2)
+        .background(groupBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .help("Stroke Pattern")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            patternMenu
+        }
+    }
+
+    private var patternMenu: some View {
+        VStack(spacing: 4) {
             ForEach(StrokePattern.allCases, id: \.self) { option in
                 Button {
                     pattern = option
+                    isPresented = false
                 } label: {
-                    StrokePatternGlyph(pattern: option)
-                        .foregroundStyle(emphasizesOnDark ? Color.white : Color.primary)
-                        .frame(width: 32, height: 26)
-                        .background(optionBackground(isSelected: pattern == option))
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(
-                                    pattern == option
-                                        ? Color.accentColor.opacity(emphasizesOnDark ? 0.9 : 0.85)
-                                        : Color.clear,
-                                    lineWidth: 1.5
-                                )
-                        )
+                    HStack(spacing: 10) {
+                        StrokePatternGlyph(pattern: option, width: 72, height: 16)
+                            .foregroundStyle(Color.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .opacity(pattern == option ? 1 : 0)
+                            .frame(width: 12)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(pattern == option
+                                  ? Color.accentColor.opacity(0.16)
+                                  : Color.clear)
+                    )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(option.label)
             }
         }
-        .padding(2)
-        .background(groupBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help("Stroke Pattern")
+        .padding(6)
+        .frame(width: 120)
     }
 
     private var groupBackground: Color {

@@ -1812,7 +1812,13 @@ final class CaptureCoordinator {
                 self.annotationWindow = nil
             },
             onShare: { [weak self] (rendered: CGImage) in
-                SystemSharePresenter.present(image: rendered, from: self?.annotationWindow)
+                let window = self?.annotationWindow
+                SystemSharePresenter.present(
+                    image: rendered,
+                    from: window,
+                    relativeTo: window?.consumeShareAnchor(),
+                    preferredEdge: .maxY
+                )
             },
             onPin: { [weak self] (rendered: CGImage, anchor: CGRect?) in
                 self?.pinRenderedImage(

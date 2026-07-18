@@ -8,27 +8,33 @@ struct AnnotationColorControls: View {
     var swatchSize: CGFloat = 19
     var spacing: CGFloat = 3
     var selectedRingColor: Color = .accentColor
+    /// When true, show only the active swatch + a color menu (for narrow windows).
+    var compact: Bool = false
 
     @State private var sampler: NSColorSampler?
     @StateObject private var colorPanel = AnnotationColorPanelController()
 
     var body: some View {
         HStack(spacing: spacing) {
-            ForEach(AnnotationColor.allCases, id: \.self) { color in
-                Button(action: { currentColor = color }) {
-                    Circle()
-                        .fill(Color(cgColor: color.cgColor))
-                        .frame(width: swatchSize, height: swatchSize)
-                        .overlay(Circle().stroke(currentColor == color ? selectedRingColor : Color.clear, lineWidth: 2))
-                        .overlay(Circle().stroke(Color.black.opacity(0.24), lineWidth: 0.5))
-                        .padding(2)
-                        .background(
-                            Circle()
-                                .fill(currentColor == color ? selectedRingColor.opacity(0.12) : Color.clear)
-                        )
+            if compact {
+                compactSwatchMenu
+            } else {
+                ForEach(AnnotationColor.basicCases, id: \.self) { color in
+                    Button(action: { currentColor = color }) {
+                        Circle()
+                            .fill(Color(cgColor: color.cgColor))
+                            .frame(width: swatchSize, height: swatchSize)
+                            .overlay(Circle().stroke(currentColor == color ? selectedRingColor : Color.clear, lineWidth: 2))
+                            .overlay(Circle().stroke(Color.black.opacity(0.24), lineWidth: 0.5))
+                            .padding(2)
+                            .background(
+                                Circle()
+                                    .fill(currentColor == color ? selectedRingColor.opacity(0.12) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(Text(color.displayName))
                 }
-                .buttonStyle(.plain)
-                .help(Text(color.displayName))
             }
 
             Button(action: showCustomColorPanel) {
@@ -58,17 +64,46 @@ struct AnnotationColorControls: View {
             .buttonStyle(.plain)
             .help("Pick Color From Screen")
 
-            Button(action: copyCurrentHex) {
-                Text(currentColor.hexRGB)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 56, height: swatchSize + 8)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.06)))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+            if !compact {
+                Button(action: copyCurrentHex) {
+                    Text(currentColor.hexRGB)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 56, height: swatchSize + 8)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.06)))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Copy HEX Color")
             }
-            .buttonStyle(.plain)
-            .help("Copy HEX Color")
         }
+    }
+
+    private var compactSwatchMenu: some View {
+        Menu {
+            ForEach(AnnotationColor.basicCases, id: \.self) { color in
+                Button {
+                    currentColor = color
+                } label: {
+                    Label {
+                        Text(color.displayName)
+                    } icon: {
+                        Image(systemName: currentColor == color ? "checkmark.circle.fill" : "circle.fill")
+                            .foregroundStyle(Color(cgColor: color.cgColor))
+                    }
+                }
+            }
+        } label: {
+            Circle()
+                .fill(Color(cgColor: currentColor.cgColor))
+                .frame(width: swatchSize, height: swatchSize)
+                .overlay(Circle().stroke(selectedRingColor, lineWidth: 2))
+                .overlay(Circle().stroke(Color.black.opacity(0.24), lineWidth: 0.5))
+                .padding(2)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Colors")
     }
 
     private func showCustomColorPanel() {

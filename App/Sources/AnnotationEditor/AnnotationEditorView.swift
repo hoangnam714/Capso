@@ -81,11 +81,23 @@ struct AnnotationEditorView: View {
     @State private var showBeautifyPanel = false
     @State private var refreshTrigger = 0
     @State private var zoomScale: CGFloat = 1.0
+    @State private var zoomPercentDraft: String = "100"
+    @FocusState private var isZoomFieldFocused: Bool
+    /// True when zoom should track the viewport (Fit). Cleared by manual zoom.
+    @State private var isZoomFitted = true
     @State private var isCropMode = false
+    @State private var isEditorFullscreen = false
+    @State private var shareButtonFrameInWindow: CGRect = .zero
     @State private var outputSize: CGSize?
     @State private var commitEditingTrigger = 0
+    @State private var chromeBindAttempts = 0
     /// Cached text line bounding boxes for smart highlighter snapping.
     @State private var textRegions: [CGRect] = []
+
+    private static let minZoom: CGFloat = 0.1
+    private static let maxZoom: CGFloat = 4.0
+    private static let minZoomPercent: Double = 10
+    private static let maxZoomPercent: Double = 400
 
     private var imageWidth: CGFloat { CGFloat(sourceImage.width) }
     private var imageHeight: CGFloat { CGFloat(sourceImage.height) }
@@ -275,6 +287,7 @@ struct AnnotationEditorView: View {
             canvasArea
             zoomBar
         }
+        .onAppear(perform: bindEditorWindowChrome)
     }
 
     private var toolbar: some View {
@@ -303,8 +316,6 @@ struct AnnotationEditorView: View {
             onRedo: { document.redo(); refreshTrigger += 1 },
             onSave: { save() },
             onCopy: { copy() },
-            onShare: { share() },
-            onPin: { pin() },
             onCancel: onCancel,
             onCrop: { isCropMode = true },
             onInsertImageFromClipboard: insertImageFromClipboard,
@@ -314,11 +325,24 @@ struct AnnotationEditorView: View {
 
     private var canvasArea: some View {
         GeometryReader { geo in
+            let contentWidth = beautifySettings.isEnabled
+                ? previewWidth
+                : effectiveImageWidth * zoomScale
+            let contentHeight = beautifySettings.isEnabled
+                ? previewHeight
+                : effectiveImageHeight * zoomScale
+            // Expand the scroll content to at least the viewport, then center
+            // the image so it sits in the middle when smaller than the window.
+            let scrollWidth = max(geo.size.width, contentWidth)
+            let scrollHeight = max(geo.size.height, contentHeight)
+
             ScrollView([.horizontal, .vertical]) {
                 previewCanvas
+                    .frame(width: contentWidth, height: contentHeight)
                     .frame(
-                        minWidth: geo.size.width,
-                        minHeight: geo.size.height
+                        width: scrollWidth,
+                        height: scrollHeight,
+                        alignment: .center
                     )
             }
             .background(Color(white: 0.12))
@@ -343,6 +367,9 @@ struct AnnotationEditorView: View {
             }
             .onChange(of: document.selectedObjectID, handleSelectionChange)
             .onChange(of: geo.size, handleCanvasSizeChange)
+            .onChange(of: zoomScale) { _, newValue in
+                syncZoomPercentDraft(from: newValue)
+            }
         }
     }
 
@@ -406,27 +433,96 @@ struct AnnotationEditorView: View {
             }
             .buttonStyle(.borderless)
             .keyboardShortcut("-", modifiers: .command)
+            .help("Zoom Out (⌘−)")
+            .disabled(zoomScale <= Self.minZoom)
 
-            Text("\(Int(zoomScale * 100))%")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 44)
+            HStack(spacing: 2) {
+                TextField("", text: $zoomPercentDraft)
+                    .font(.system(size: 11, design: .monospaced))
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.plain)
+                    .frame(width: 36)
+                    .focused($isZoomFieldFocused)
+                    .onSubmit(commitZoomPercentDraft)
+                    .onChange(of: isZoomFieldFocused) { _, focused in
+                        if !focused { commitZoomPercentDraft() }
+                    }
+                Text("%")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 4))
+            .help("Enter zoom percentage")
 
             Button(action: zoomIn) {
                 Image(systemName: "plus.magnifyingglass")
             }
             .buttonStyle(.borderless)
             .keyboardShortcut("=", modifiers: .command)
+            .help("Zoom In (⌘=)")
+            .disabled(zoomScale >= Self.maxZoom)
+
+            Slider(
+                value: zoomPercentSliderBinding,
+                in: Self.minZoomPercent...Self.maxZoomPercent
+            )
+            .frame(width: 140)
+            .help("Drag to zoom (10%–400%)")
 
             Button("Fit", action: refitToCurrentWindow)
                 .buttonStyle(.borderless)
                 .keyboardShortcut("0", modifiers: .command)
+                .help("Fit to Window (⌘0)")
+
+            Button("100%", action: zoomToActualSize)
+                .buttonStyle(.borderless)
+                .keyboardShortcut("1", modifiers: .command)
+                .help("Actual Size (⌘1)")
+                .disabled(abs(zoomScale - 1) < 0.001)
 
             Spacer()
+
+            Button(action: share) {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("i", modifiers: [.command, .shift])
+            .help("Share (⇧⌘I)")
+            .background(ShareButtonAnchorReader { rect in
+                shareButtonFrameInWindow = rect
+            })
+
+            Button(action: pin) {
+                Image(systemName: "pin")
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("p", modifiers: .command)
+            .help("Pin (⌘P)")
+
+            Button(action: toggleEditorFullscreen) {
+                Image(systemName: isEditorFullscreen
+                      ? "arrow.down.right.and.arrow.up.left"
+                      : "arrow.up.left.and.arrow.down.right")
+            }
+            .buttonStyle(.borderless)
+            .help(isEditorFullscreen
+                  ? "Exit Full Screen (⌃⌘F)"
+                  : "Enter Full Screen (⌃⌘F)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(.bar)
+    }
+
+    private var zoomPercentSliderBinding: Binding<Double> {
+        Binding(
+            get: { Double(zoomScale * 100) },
+            set: { newPercent in
+                setZoomScale(CGFloat(newPercent / 100), fitted: false)
+            }
+        )
     }
 
     private var canvasCornerRadius: CGFloat {
@@ -586,7 +682,11 @@ struct AnnotationEditorView: View {
     }
 
     private func handleCanvasSizeChange(oldSize: CGSize, newSize: CGSize) {
-        if zoomScale == fitScale(for: newSize) { return }
+        // Keep the image fitted when the viewport changes (resize / fullscreen)
+        // if the user hasn't chosen a manual zoom level.
+        if isZoomFitted {
+            fitToWindow(availableSize: newSize)
+        }
     }
 
     private func handleCanvasInteractionChanged(_ isInteracting: Bool) {
@@ -628,15 +728,55 @@ struct AnnotationEditorView: View {
         savedTextFontSize = Double(lineWidth)
     }
 
-    private func refitToCurrentWindow() {
-        if let window = NSApp.keyWindow {
-            let toolbarH: CGFloat = 90
-            let available = CGSize(
-                width: window.contentView?.bounds.width ?? 800,
-                height: (window.contentView?.bounds.height ?? 600) - toolbarH
-            )
-            fitToWindow(availableSize: available)
+    private func editorWindow() -> AnnotationEditorWindow? {
+        if let key = NSApp.keyWindow as? AnnotationEditorWindow {
+            return key
         }
+        return NSApp.windows.compactMap { $0 as? AnnotationEditorWindow }.first { $0.isVisible }
+    }
+
+    /// Wire pinch / ⌘-scroll zoom and fullscreen callbacks onto the hosting panel.
+    private func bindEditorWindowChrome() {
+        guard let window = editorWindow() else {
+            guard chromeBindAttempts < 10 else { return }
+            chromeBindAttempts += 1
+            DispatchQueue.main.async {
+                bindEditorWindowChrome()
+            }
+            return
+        }
+        chromeBindAttempts = 0
+        isEditorFullscreen = window.isEditorFullscreen
+        window.onZoomByFactor = { factor in
+            applyZoomFactor(factor)
+        }
+        window.onFullscreenChanged = { fullscreen in
+            isEditorFullscreen = fullscreen
+            // Viewport GeometryReader will refit via `isZoomFitted` + size change.
+            // Also force a fit in case the size callback already fired mid-animation.
+            if isZoomFitted {
+                DispatchQueue.main.async {
+                    refitToCurrentWindow()
+                }
+            }
+        }
+    }
+
+    private func toggleEditorFullscreen() {
+        guard let window = editorWindow() else { return }
+        window.toggleEditorFullscreen()
+        isEditorFullscreen = window.isEditorFullscreen
+    }
+
+    private func refitToCurrentWindow() {
+        let window = editorWindow() ?? (NSApp.keyWindow as NSWindow?)
+        guard let window else { return }
+        let toolbarH: CGFloat = 90
+        let available = CGSize(
+            width: window.contentView?.bounds.width ?? 800,
+            height: (window.contentView?.bounds.height ?? 600) - toolbarH
+        )
+        fitToWindow(availableSize: available)
     }
 
     private func fitScale(for size: CGSize) -> CGFloat {
@@ -648,15 +788,47 @@ struct AnnotationEditorView: View {
     }
 
     private func fitToWindow(availableSize: CGSize) {
-        zoomScale = fitScale(for: availableSize)
+        setZoomScale(fitScale(for: availableSize), fitted: true)
+    }
+
+    private func setZoomScale(_ scale: CGFloat, fitted: Bool) {
+        let clamped = min(max(scale, Self.minZoom), Self.maxZoom)
+        isZoomFitted = fitted
+        zoomScale = clamped
+        syncZoomPercentDraft(from: clamped)
+    }
+
+    private func applyZoomFactor(_ factor: CGFloat) {
+        guard factor > 0, factor.isFinite else { return }
+        setZoomScale(zoomScale * factor, fitted: false)
     }
 
     private func zoomIn() {
-        zoomScale = min(zoomScale * 1.25, 4.0)
+        applyZoomFactor(1.25)
     }
 
     private func zoomOut() {
-        zoomScale = max(zoomScale / 1.25, 0.1)
+        applyZoomFactor(1 / 1.25)
+    }
+
+    private func zoomToActualSize() {
+        setZoomScale(1.0, fitted: false)
+    }
+
+    private func syncZoomPercentDraft(from scale: CGFloat) {
+        guard !isZoomFieldFocused else { return }
+        zoomPercentDraft = "\(Int((scale * 100).rounded()))"
+    }
+
+    private func commitZoomPercentDraft() {
+        let trimmed = zoomPercentDraft
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "%", with: "")
+        guard let value = Double(trimmed), value.isFinite else {
+            syncZoomPercentDraft(from: zoomScale)
+            return
+        }
+        setZoomScale(CGFloat(value / 100), fitted: false)
     }
 
     /// Update the selected object's style when color/lineWidth/filled changes
@@ -774,11 +946,67 @@ struct AnnotationEditorView: View {
     }
 
     private func share() {
+        // Capture the Share control's location before async render — otherwise
+        // `NSApp.currentEvent` is gone and the system sheet anchors elsewhere.
+        if let window = editorWindow(),
+           let content = window.contentView {
+            let anchor: NSRect
+            if let event = NSApp.currentEvent, event.window === window {
+                let p = content.convert(event.locationInWindow, from: nil)
+                anchor = NSRect(x: p.x - 14, y: p.y - 14, width: 28, height: 28)
+            } else if shareButtonFrameInWindow.width > 0 {
+                // Fallback: convert SwiftUI global frame → contentView.
+                anchor = contentViewRect(fromGlobal: shareButtonFrameInWindow, window: window, content: content)
+                    ?? .zero
+            } else {
+                anchor = .zero
+            }
+            if anchor.width > 0 {
+                window.pendingShareAnchorInContentView = anchor
+            }
+        }
+
         commitEditingTrigger += 1
         DispatchQueue.main.async {
             if let rendered = renderedOutputImage() {
                 onShare(rendered)
             }
+        }
+    }
+
+    /// Converts a SwiftUI `.global` rect (top-left origin, screen space) into
+    /// AppKit `contentView` coordinates (bottom-left origin).
+    private func contentViewRect(
+        fromGlobal global: CGRect,
+        window: NSWindow,
+        content: NSView
+    ) -> NSRect? {
+        guard let screen = window.screen ?? NSScreen.main else { return nil }
+        // SwiftUI global Y grows downward from the primary-layout top; AppKit
+        // screen Y grows upward from the bottom of the screen.
+        let screenHeight = screen.frame.maxY
+        let appKitScreenRect = NSRect(
+            x: global.minX,
+            y: screenHeight - global.maxY,
+            width: global.width,
+            height: global.height
+        )
+        let windowRect = window.convertFromScreen(appKitScreenRect)
+        return content.convert(windowRect, from: nil)
+    }
+}
+
+/// Reads a SwiftUI view's frame in global coordinates for share-sheet anchoring.
+private struct ShareButtonAnchorReader: View {
+    let onChange: (CGRect) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { onChange(geo.frame(in: .global)) }
+                .onChange(of: geo.frame(in: .global)) { _, newValue in
+                    onChange(newValue)
+                }
         }
     }
 }

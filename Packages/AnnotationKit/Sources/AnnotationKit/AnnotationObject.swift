@@ -172,6 +172,11 @@ public struct AnnotationColor: RawRepresentable, Codable, CaseIterable, Hashable
         .red, .orange, .yellow, .green, .blue, .purple, .white, .black,
     ]
 
+    /// Compact swatch row for the annotation toolbar (red / yellow / white / black).
+    public static let basicCases: [AnnotationColor] = [
+        .red, .yellow, .white, .black,
+    ]
+
     public var cgColor: CGColor {
         if let preset = Self.presetColors[rawValue] {
             return preset
