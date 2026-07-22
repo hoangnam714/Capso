@@ -54,13 +54,12 @@ struct AnnotationToolbar: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            // Pick the richest layout that still fits the available width so
-            // small MacBook windows can shrink instead of locking min-width.
-            ViewThatFits(in: .horizontal) {
-                toolbarRow(density: .full)
-                toolbarRow(density: .compact)
-                toolbarRow(density: .minimal)
+            GeometryReader { geo in
+                let density = Self.density(forAvailableWidth: geo.size.width)
+                toolbarRow(density: density)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: 34)
 
             if isFontSizeMode {
                 textEffectsGroup
@@ -81,44 +80,61 @@ struct AnnotationToolbar: View {
     }
 
     private enum ToolbarDensity {
-        /// All drawing tools inline (preferred).
+        /// All drawing tools + full color swatches.
         case full
-        /// Same tools as full, but compact color row for mid-width windows.
+        /// Primary tools inline; secondary tools + insert in a "More" menu.
         case compact
-        /// Current tool + overflow menu only when the window is very narrow.
+        /// Current tool + overflow menu; color dropdown.
         case minimal
     }
 
+    /// Width budgets measured against the GeometryReader (inside horizontal padding).
+    /// Tuned so a 13" MacBook (~1280pt) always gets a non-overlapping layout.
+    private static func density(forAvailableWidth width: CGFloat) -> ToolbarDensity {
+        if width >= 900 { return .full }
+        if width >= 620 { return .compact }
+        return .minimal
+    }
+
     private func toolbarRow(density: ToolbarDensity) -> some View {
-        HStack(spacing: density == .minimal ? 8 : 10) {
+        HStack(spacing: density == .minimal ? 6 : 8) {
             toolsSection(density: density)
+                .fixedSize(horizontal: true, vertical: false)
             toolbarDivider
             colorSection(density: density)
+                .fixedSize(horizontal: true, vertical: false)
             toolbarDivider
             strokeGroup
+                .fixedSize(horizontal: true, vertical: false)
             toolbarDivider
             cropGroup
             toolbarDivider
             beautifyGroup
             toolbarDivider
             undoGroup
-            Spacer(minLength: 4)
+            Spacer(minLength: 8)
             actionGroup
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private func toolsSection(density: ToolbarDensity) -> some View {
         switch density {
-        case .full, .compact:
-            // Always keep Line / Counter / Highlighter / Focus / Insert visible.
+        case .full:
             HStack(spacing: 4) {
                 ForEach(Self.allToolItems, id: \.tool) { item in
                     toolItemButton(item)
                 }
                 toolbarDivider
                 insertImageButtons
+            }
+        case .compact:
+            HStack(spacing: 4) {
+                ForEach(Self.primaryToolItems, id: \.tool) { item in
+                    toolItemButton(item)
+                }
+                moreToolsMenu(items: Self.secondaryToolItems, includeInsertImage: true)
             }
         case .minimal:
             HStack(spacing: 4) {
@@ -135,12 +151,18 @@ struct AnnotationToolbar: View {
         switch density {
         case .full:
             AnnotationColorControls(currentColor: $currentColor)
-        case .compact, .minimal:
+        case .compact:
+            AnnotationColorControls(
+                currentColor: $currentColor,
+                swatchSize: 17,
+                spacing: 2
+            )
+        case .minimal:
             AnnotationColorControls(
                 currentColor: $currentColor,
                 swatchSize: 16,
                 spacing: 2,
-                compact: density == .minimal
+                compact: true
             )
         }
     }
@@ -151,6 +173,23 @@ struct AnnotationToolbar: View {
         let label: LocalizedStringKey
         var isText: Bool = false
     }
+
+    private static let primaryToolItems: [ToolItem] = [
+        ToolItem(tool: .select, icon: "cursorarrow", label: "Select"),
+        ToolItem(tool: .arrow, icon: "arrow.up.right", label: "Arrow"),
+        ToolItem(tool: .rectangle, icon: "rectangle", label: "Rectangle (⌃: square)"),
+        ToolItem(tool: .ellipse, icon: "circle", label: "Ellipse (⌃: circle)"),
+        ToolItem(tool: .text, icon: "textformat", label: "Text", isText: true),
+        ToolItem(tool: .freehand, icon: "pencil.tip", label: "Draw"),
+        ToolItem(tool: .pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur"),
+    ]
+
+    private static let secondaryToolItems: [ToolItem] = [
+        ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
+        ToolItem(tool: .counter, icon: "number.circle.fill", label: "Counter"),
+        ToolItem(tool: .highlighter, icon: "highlighter", label: "Highlighter"),
+        ToolItem(tool: .highlightFocus, icon: "circle.lefthalf.filled", label: "Highlight Focus"),
+    ]
 
     private static let allToolItems: [ToolItem] = [
         ToolItem(tool: .select, icon: "cursorarrow", label: "Select"),
@@ -212,9 +251,10 @@ struct AnnotationToolbar: View {
     }
 
     private func isOverflowToolSelected(_ items: [ToolItem]) -> Bool {
-        // In minimal mode the current tool also has its own button, so only
-        // highlight "More" when that button isn't already showing the same tool.
+        // Highlight "More" when the active tool lives in that menu and isn't
+        // already shown as its own primary button (compact/minimal).
         items.contains { $0.tool == currentTool }
+            && !Self.primaryToolItems.contains { $0.tool == currentTool }
     }
 
     private var insertImageButtons: some View {
@@ -364,6 +404,7 @@ struct AnnotationToolbar: View {
         }
         .frame(minWidth: 0)
         .layoutPriority(-1)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var showsStrokePatternPicker: Bool {

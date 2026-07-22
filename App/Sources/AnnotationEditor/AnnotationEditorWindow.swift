@@ -54,12 +54,16 @@ final class AnnotationEditorWindow: NSPanel {
         let maxW = screen.visibleFrame.width * 0.8
         let maxH = screen.visibleFrame.height * 0.8
         let chromeH: CGFloat = 110
+        // Wide enough for the compact toolbar on a 13" MacBook (~1280pt wide).
+        // Narrower windows still work via the minimal toolbar density, but we
+        // never open below this so buttons don't overlap on first launch.
+        let minimumWindowWidth: CGFloat = 680
+        let minimumWindowHeight: CGFloat = 360
 
         let scale = min(1.0, min(maxW / max(imgW, 1), (maxH - chromeH) / max(imgH, 1)))
-        // Prefer fitting the image, but don't force a wide window on small screens.
-        let preferredW = max(imgW * scale, 420)
+        let preferredW = max(imgW * scale, minimumWindowWidth)
         let winW = min(preferredW, maxW)
-        let winH = max(imgH * scale + chromeH, 360)
+        let winH = max(imgH * scale + chromeH, minimumWindowHeight)
 
         // Center inside the target screen's visibleFrame. `visibleFrame` is
         // already in absolute desktop coordinates, so this puts the window on
@@ -95,9 +99,7 @@ final class AnnotationEditorWindow: NSPanel {
         // contentRect passed to init. Disable restoration and explicitly
         // re-apply the target frame so we actually land on the right screen.
         self.isRestorable = false
-        // Allow shrinking on 13" MacBooks; toolbar collapses into menus when
-        // the window is narrower than the full tool strip.
-        self.minSize = NSSize(width: 360, height: 280)
+        self.minSize = NSSize(width: minimumWindowWidth, height: minimumWindowHeight)
         self.setFrame(targetFrame, display: false)
 
         let view = AnnotationEditorView(
