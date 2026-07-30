@@ -25,6 +25,8 @@ struct QuickAccessView: View {
     let onPin: () -> Void
     let onPreview: () -> Void
     let onClose: () -> Void
+    /// Notifies the hosting panel so auto-dismiss can pause while hovered.
+    var onHoveringChanged: ((Bool) -> Void)? = nil
 
     @State private var isHovering = false
     @State private var hoveredAction: HoverAction?
@@ -54,15 +56,11 @@ struct QuickAccessView: View {
         VStack(spacing: 9) {
             thumbnailFrame
 
-            // Caption at rest / chrome on hover share the same slot so the
-            // panel does not resize while the user's pointer moves across it.
-            ZStack {
+            VStack(spacing: 6) {
                 captionRow
-                    .opacity(isRevealed ? 0 : 1)
-                chromeStrip
-                    .opacity(isRevealed ? 1 : 0)
+                toolbar
             }
-            .frame(height: 50)
+            .frame(minHeight: 50)
         }
         .padding(8)
         .background(hiddenEscapeButton)
@@ -79,7 +77,10 @@ struct QuickAccessView: View {
         .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
         .offset(y: isRevealed ? -2 : 0)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.26), value: isRevealed)
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = hovering
+            onHoveringChanged?(hovering)
+        }
         .focusable()
         .focused($isFocused)
         .overlay(alignment: .bottom) {
@@ -114,9 +115,10 @@ struct QuickAccessView: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .onTapGesture(count: 2, perform: onPreview)
-                .help("Double-click to preview")
+                .onTapGesture(count: 1, perform: onAnnotate)
+                .help("Click to annotate · Double-click to preview")
                 .accessibilityLabel(Text("Screenshot preview"))
-                .accessibilityHint(Text("Double-click to enlarge preview"))
+                .accessibilityHint(Text("Click to annotate, double-click to enlarge"))
 
             if isRevealed {
                 Button(action: onClose) {
@@ -140,18 +142,22 @@ struct QuickAccessView: View {
     private var captionRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Label {
-                Text("Captured")
+                Text(hoveredAction.map(label) ?? String(localized: "Captured"))
                     .font(.system(size: 13, weight: .semibold))
             } icon: {
-                Image(systemName: "checkmark.circle.fill")
+                Image(systemName: hoveredAction == nil ? "checkmark.circle.fill" : "hand.tap")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(hoveredAction == nil ? .green : .secondary)
             }
             Spacer()
-            Text(metaLine)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+            if let key = hoveredShortcutKey {
+                ShortcutKeyPill(text: key)
+            } else {
+                Text(metaLine)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+            }
         }
         .padding(.horizontal, 6)
     }
@@ -164,49 +170,6 @@ struct QuickAccessView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: capturedAt, relativeTo: Date())
-    }
-
-    // MARK: - Chrome (revealed on hover/focus)
-
-    private var chromeStrip: some View {
-        VStack(spacing: 4) {
-            contextLine
-            toolbar
-        }
-    }
-
-    private var contextLine: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text(contextTitle)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-            Spacer()
-            contextHintView
-        }
-        .padding(.horizontal, 4)
-        .frame(height: 20)
-    }
-
-    private var contextTitle: String {
-        guard let action = hoveredAction else { return "Quick Access" }
-        return label(action)
-    }
-
-    /// Right-aligned hint for the hovered action: a keycap-style pill
-    /// showing the shortcut (⌘S, ⌘⇧T, …) plus — for Translate — a subtle
-    /// suffix naming the target language.
-    @ViewBuilder
-    private var contextHintView: some View {
-        HStack(spacing: 5) {
-            if let key = hoveredShortcutKey {
-                ShortcutKeyPill(text: key)
-            }
-            if let suffix = hoveredHintSuffix {
-                Text(suffix)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 
     private var hoveredShortcutKey: String? {
@@ -224,29 +187,14 @@ struct QuickAccessView: View {
         }
     }
 
-    private var hoveredHintSuffix: String? {
-        guard hoveredAction == .translate,
-              let lang = targetLanguageDisplay, !lang.isEmpty else { return nil }
-        return "→ \(lang)"
-    }
-
+    /// Primary actions always visible; secondary actions live in More.
     private var toolbar: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-            saveToolButton(action: onSave)
-            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            toolButton(.annotate, icon: "pencil.tip.crop.circle", isPrimary: true, action: onAnnotate)
             toolButton(.delete, icon: "trash", action: onDelete)
-            if shareCoordinator != nil {
-                toolDivider
-                uploadButton
-            }
-            toolDivider
-            toolButton(.annotate, icon: "pencil.tip.crop.circle", action: onAnnotate)
-            toolDivider
-            toolButton(.ocr, icon: "text.viewfinder", action: onOCR)
-            toolButton(.translate, icon: "character.bubble", action: onTranslate)
-            toolDivider
-            toolButton(.pin, icon: "pin", action: onPin)
+            Spacer(minLength: 4)
+            moreActionsMenu
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Quick Access actions"))
@@ -255,26 +203,75 @@ struct QuickAccessView: View {
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
-    @ViewBuilder
-    private var uploadButton: some View {
-        if shareCoordinator != nil {
-            switch visualState {
-            case .idle, .failed:
-                toolButton(
-                    .upload,
-                    icon: "icloud.and.arrow.up",
-                    action: { Task { await performUpload() } }
-                )
-            case .uploading:
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 28, height: 26)  // matches toolButton height
-            case .succeeded:
-                toolButton(.linkCopied, icon: "checkmark.circle.fill", action: {})
-                    .foregroundStyle(.green)
-                    .disabled(true)
+    private var moreActionsMenu: some View {
+        Menu {
+            Button {
+                onSave()
+            } label: {
+                Label(String(localized: "Save"), systemImage: "square.and.arrow.down")
             }
+            .keyboardShortcut("s", modifiers: .command)
+
+            Button {
+                onShare()
+            } label: {
+                Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+            }
+            .keyboardShortcut("i", modifiers: [.command, .shift])
+
+            Button {
+                onPin()
+            } label: {
+                Label(String(localized: "Pin"), systemImage: "pin")
+            }
+            .keyboardShortcut("p", modifiers: .command)
+
+            Divider()
+
+            Button {
+                onOCR()
+            } label: {
+                Label(String(localized: "OCR"), systemImage: "text.viewfinder")
+            }
+            .keyboardShortcut("o", modifiers: [.command, .shift])
+
+            Button {
+                onTranslate()
+            } label: {
+                Label(
+                    targetLanguageDisplay.map { String(localized: "Translate → \($0)") }
+                        ?? String(localized: "Translate"),
+                    systemImage: "character.bubble"
+                )
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+
+            if shareCoordinator != nil {
+                Divider()
+                switch visualState {
+                case .idle, .failed:
+                    Button {
+                        Task { await performUpload() }
+                    } label: {
+                        Label(String(localized: "Upload to Cloud"), systemImage: "icloud.and.arrow.up")
+                    }
+                case .uploading:
+                    Text(String(localized: "Uploading…"))
+                case .succeeded:
+                    Label(String(localized: "Link Copied"), systemImage: "checkmark.circle.fill")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary.opacity(0.78))
+                .frame(width: 29, height: 28)
+                .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help(String(localized: "More"))
+        .onHover { hoveredAction = $0 ? nil : hoveredAction }
     }
 
     private func performUpload() async {
@@ -315,31 +312,6 @@ struct QuickAccessView: View {
             visualState = .failed(err)
         } catch {
             visualState = .failed(.unknown(error.localizedDescription))
-        }
-    }
-
-    @ViewBuilder
-    private func saveToolButton(action: @escaping () -> Void) -> some View {
-        let button = Button(action: action) {
-            SaveIcon()
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(toolForeground(.save, isPrimary: true))
-                .frame(width: 29, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(toolBackground(.save, isPrimary: true))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hoveredAction = $0 ? .save : nil }
-        .help(Text(label(.save)))
-        .accessibilityLabel(Text(label(.save)))
-        .accessibilityHint(Text(hintForAccessibility(.save)))
-
-        if let shortcut = shortcut(for: .save) {
-            button.keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
-        } else {
-            button
         }
     }
 
@@ -412,12 +384,6 @@ struct QuickAccessView: View {
             .opacity(0)
             .frame(width: 0, height: 0)
             .allowsHitTesting(false)
-    }
-
-    private var toolDivider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.10))
-            .frame(width: 1, height: 14)
     }
 
     private func label(_ kind: HoverAction) -> String {

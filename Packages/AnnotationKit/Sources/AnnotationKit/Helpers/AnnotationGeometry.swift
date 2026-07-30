@@ -52,4 +52,12 @@ enum AnnotationGeometry {
         }
         return atan2(end.y - start.y, end.x - start.x)
     }
+
+    /// Tangent angle at the start of a straight/quadratic arrow (direction of travel).
+    static func curveStartAngle(start: CGPoint, control: CGPoint?, end: CGPoint) -> CGFloat {
+        if let control, hypot(control.x - start.x, control.y - start.y) > 0 {
+            return atan2(control.y - start.y, control.x - start.x)
+        }
+        return atan2(end.y - start.y, end.x - start.x)
+    }
 }

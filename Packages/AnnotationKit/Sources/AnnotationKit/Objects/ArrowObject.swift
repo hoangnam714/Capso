@@ -9,11 +9,18 @@ public final class ArrowObject: AnnotationObject, @unchecked Sendable {
     public var end: CGPoint
     public var controlPoint: CGPoint?
     public var headLength: CGFloat = 15
+    public var headStyle: ArrowHeadStyle = .single
 
-    public init(start: CGPoint, end: CGPoint, style: StrokeStyle = StrokeStyle()) {
+    public init(
+        start: CGPoint,
+        end: CGPoint,
+        style: StrokeStyle = StrokeStyle(),
+        headStyle: ArrowHeadStyle = .single
+    ) {
         self.start = start
         self.end = end
         self.style = style
+        self.headStyle = headStyle
     }
 
     /// Arrowhead length scales with stroke width for visual consistency.
@@ -76,15 +83,33 @@ public final class ArrowObject: AnnotationObject, @unchecked Sendable {
         ctx.strokePath()
 
         ctx.setLineDash(phase: 0, lengths: [])
-        let angle = AnnotationGeometry.curveEndAngle(start: start, control: controlPoint, end: end)
+        let endAngle = AnnotationGeometry.curveEndAngle(start: start, control: controlPoint, end: end)
+        drawHead(in: ctx, at: end, pointingAngle: endAngle)
+
+        if headStyle == .double {
+            // Tip at start points outward opposite the travel direction.
+            let startAngle = AnnotationGeometry.curveStartAngle(start: start, control: controlPoint, end: end)
+            drawHead(in: ctx, at: start, pointingAngle: startAngle + .pi)
+        }
+        ctx.restoreGState()
+    }
+
+    private func drawHead(in ctx: CGContext, at tip: CGPoint, pointingAngle angle: CGFloat) {
         let headAngle: CGFloat = .pi / 6
         let hl = effectiveHeadLength
-        let p1 = CGPoint(x: end.x - hl * cos(angle - headAngle), y: end.y - hl * sin(angle - headAngle))
-        let p2 = CGPoint(x: end.x - hl * cos(angle + headAngle), y: end.y - hl * sin(angle + headAngle))
-        ctx.move(to: end); ctx.addLine(to: p1)
-        ctx.move(to: end); ctx.addLine(to: p2)
+        let p1 = CGPoint(
+            x: tip.x - hl * cos(angle - headAngle),
+            y: tip.y - hl * sin(angle - headAngle)
+        )
+        let p2 = CGPoint(
+            x: tip.x - hl * cos(angle + headAngle),
+            y: tip.y - hl * sin(angle + headAngle)
+        )
+        ctx.move(to: tip)
+        ctx.addLine(to: p1)
+        ctx.move(to: tip)
+        ctx.addLine(to: p2)
         ctx.strokePath()
-        ctx.restoreGState()
     }
 
     public func move(by delta: CGSize) {
@@ -95,7 +120,7 @@ public final class ArrowObject: AnnotationObject, @unchecked Sendable {
     }
 
     public func copy() -> any AnnotationObject {
-        let c = ArrowObject(start: start, end: end, style: style)
+        let c = ArrowObject(start: start, end: end, style: style, headStyle: headStyle)
         c.controlPoint = controlPoint
         c.headLength = headLength
         return c

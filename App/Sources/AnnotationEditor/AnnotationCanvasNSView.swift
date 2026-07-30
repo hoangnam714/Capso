@@ -67,6 +67,10 @@ final class AnnotationCanvasNSView: NSView {
     var currentStyle: StrokeStyle = StrokeStyle() {
         didSet { syncEditorStyle() }
     }
+    /// Tip style for newly drawn arrows (one-way vs two-way).
+    var currentArrowHeadStyle: ArrowHeadStyle = .single
+    /// Kind for newly drawn Shape tool objects (cloud, trapezoid, …).
+    var currentShapeKind: ShapeKind = .triangle
     var redactionMode: RedactionMode = .pixelate
     /// Font size used for newly created TextObjects and propagated live to
     /// the inline editor. Pushed from SwiftUI by AnnotationCanvasView.
@@ -210,8 +214,8 @@ final class AnnotationCanvasNSView: NSView {
     // MARK: - Handle Hit Testing
 
     private func supportsIndependentEdgeResize(for object: any AnnotationObject) -> Bool {
-        if object is RectangleObject || object is EllipseObject || object is ImageObject
-            || object is HighlightFocusObject {
+        if object is RectangleObject || object is EllipseObject || object is ShapeObject
+            || object is ImageObject || object is HighlightFocusObject {
             return true
         }
         if let text = object as? TextObject {
@@ -586,7 +590,7 @@ final class AnnotationCanvasNSView: NSView {
             height: abs(end.y - start.y)
         )
         guard constrainShapeAspect,
-              currentTool == .rectangle || currentTool == .ellipse else {
+              currentTool == .rectangle || currentTool == .ellipse || currentTool == .shape else {
             return freeform
         }
         return Self.equalSidesRect(from: start, to: end)
@@ -824,22 +828,26 @@ final class AnnotationCanvasNSView: NSView {
             ctx.strokePath()
 
             ctx.setLineDash(phase: 0, lengths: [])
-            let angle = atan2(end.y - start.y, end.x - start.x)
             let headAngle: CGFloat = .pi / 6
             let headLength = max(15, currentStyle.lineWidth * 3)
-            let p1 = CGPoint(
-                x: end.x - headLength * cos(angle - headAngle),
-                y: end.y - headLength * sin(angle - headAngle)
+            let endAngle = atan2(end.y - start.y, end.x - start.x)
+            Self.strokeArrowHeadPreview(
+                in: ctx,
+                tip: end,
+                angle: endAngle,
+                headLength: headLength,
+                headAngle: headAngle
             )
-            let p2 = CGPoint(
-                x: end.x - headLength * cos(angle + headAngle),
-                y: end.y - headLength * sin(angle + headAngle)
-            )
-            ctx.move(to: end)
-            ctx.addLine(to: p1)
-            ctx.move(to: end)
-            ctx.addLine(to: p2)
-            ctx.strokePath()
+            if currentArrowHeadStyle == .double {
+                let startAngle = atan2(start.y - end.y, start.x - end.x)
+                Self.strokeArrowHeadPreview(
+                    in: ctx,
+                    tip: start,
+                    angle: startAngle,
+                    headLength: headLength,
+                    headAngle: headAngle
+                )
+            }
         case .line:
             currentStyle.pattern.apply(to: ctx, lineWidth: currentStyle.lineWidth)
             ctx.setLineCap(.round)
@@ -867,12 +875,48 @@ final class AnnotationCanvasNSView: NSView {
                 ctx.setAlpha(0.35)
                 ctx.fillEllipse(in: rect)
             }
+        case .shape:
+            let path = ShapeObject.path(for: currentShapeKind, in: rect)
+            if currentStyle.filled {
+                ctx.setFillColor(currentStyle.color.cgColor)
+                ctx.setAlpha(0.35)
+                ctx.addPath(path)
+                ctx.fillPath()
+            } else {
+                currentStyle.pattern.apply(to: ctx, lineWidth: currentStyle.lineWidth)
+                ctx.setLineCap(.round)
+                ctx.setLineJoin(.round)
+                ctx.addPath(path)
+                ctx.strokePath()
+            }
         case .pixelate: ctx.setFillColor(CGColor(gray: 0.5, alpha: 0.3)); ctx.fill(rect)
         case .highlightFocus:
             break // Drawn separately so existing focus holes stay visible.
         default: break
         }
         ctx.restoreGState()
+    }
+
+    private static func strokeArrowHeadPreview(
+        in ctx: CGContext,
+        tip: CGPoint,
+        angle: CGFloat,
+        headLength: CGFloat,
+        headAngle: CGFloat
+    ) {
+        let p1 = CGPoint(
+            x: tip.x - headLength * cos(angle - headAngle),
+            y: tip.y - headLength * sin(angle - headAngle)
+        )
+        let p2 = CGPoint(
+            x: tip.x - headLength * cos(angle + headAngle),
+            y: tip.y - headLength * sin(angle + headAngle)
+        )
+        ctx.move(to: tip)
+        ctx.addLine(to: p1)
+        ctx.move(to: tip)
+        ctx.addLine(to: p2)
+        ctx.strokePath()
     }
 
     private func highlightFocusPreviewRect() -> CGRect? {
@@ -1096,7 +1140,8 @@ final class AnnotationCanvasNSView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let point = toImagePoint(convert(event.locationInWindow, from: nil))
         dragCurrent = point
-        if currentTool == .rectangle || currentTool == .ellipse || isResizingRectOrEllipseObject {
+        if currentTool == .rectangle || currentTool == .ellipse || currentTool == .shape
+            || isResizingRectOrEllipseObject {
             updateConstrainShapeAspect(from: event)
         }
 
@@ -1257,7 +1302,7 @@ final class AnnotationCanvasNSView: NSView {
         }
 
         if constrainShapeAspect,
-           obj is RectangleObject || obj is EllipseObject,
+           obj is RectangleObject || obj is EllipseObject || obj is ShapeObject,
            let selectionHandle = handle.captureSelectionHandle {
             let bounds = CGRect(origin: .zero, size: document?.imageSize ?? .zero)
             newRect = CaptureSelectionGeometry.resize(
@@ -1277,6 +1322,7 @@ final class AnnotationCanvasNSView: NSView {
         // Apply to the object
         if let rect = obj as? RectangleObject { rect.rect = newRect }
         else if let ellipse = obj as? EllipseObject { ellipse.rect = newRect }
+        else if let shape = obj as? ShapeObject { shape.rect = newRect }
         else if let pixelate = obj as? PixelateObject { pixelate.rect = newRect }
         else if let image = obj as? ImageObject { image.rect = newRect }
         else if let text = obj as? TextObject {
@@ -1451,7 +1497,12 @@ final class AnnotationCanvasNSView: NSView {
             switch currentTool {
             case .arrow:
                 if hypot(end.x - start.x, end.y - start.y) > 5 / zoomScale {
-                    doc.addObject(ArrowObject(start: start, end: end, style: currentStyle))
+                    doc.addObject(ArrowObject(
+                        start: start,
+                        end: end,
+                        style: currentStyle,
+                        headStyle: currentArrowHeadStyle
+                    ))
                 }
             case .line:
                 if hypot(end.x - start.x, end.y - start.y) > 5 / zoomScale {
@@ -1466,6 +1517,11 @@ final class AnnotationCanvasNSView: NSView {
                 let rect = drawingShapeRect(from: start, to: end)
                 if rect.width > 3 / zoomScale && rect.height > 3 / zoomScale {
                     doc.addObject(EllipseObject(rect: rect, style: currentStyle))
+                }
+            case .shape:
+                let rect = drawingShapeRect(from: start, to: end)
+                if rect.width > 3 / zoomScale && rect.height > 3 / zoomScale {
+                    doc.addObject(ShapeObject(rect: rect, kind: currentShapeKind, style: currentStyle))
                 }
             case .text:
                 // Inline editor replaces the old NSAlert popup. Spawn at the
@@ -1558,7 +1614,7 @@ final class AnnotationCanvasNSView: NSView {
         // Live-update square/circle preview when Control is pressed or released mid-drag.
         if isDragging,
            (activeResizeHandle == nil && !isMovingObject
-               && (currentTool == .rectangle || currentTool == .ellipse))
+               && (currentTool == .rectangle || currentTool == .ellipse || currentTool == .shape))
                || isResizingRectOrEllipseObject {
             updateConstrainShapeAspect(from: event)
             if activeResizeHandle != nil,
@@ -1583,7 +1639,7 @@ final class AnnotationCanvasNSView: NSView {
     private var isResizingRectOrEllipseObject: Bool {
         guard activeResizeHandle != nil, let objID = dragObjectID else { return false }
         guard let obj = document?.objects.first(where: { $0.id == objID }) else { return false }
-        return obj is RectangleObject || obj is EllipseObject
+        return obj is RectangleObject || obj is EllipseObject || obj is ShapeObject
     }
 
     /// Handles ⌘C / ⌘V / ⌘D for annotation objects. Returns `true` when handled.

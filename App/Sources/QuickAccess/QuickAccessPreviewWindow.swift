@@ -92,13 +92,6 @@ private struct QuickAccessPreviewView: View {
                 .keyboardShortcut("c", modifiers: .command)
 
                 previewActionButton(
-                    title: String(localized: "Share"),
-                    systemImage: "square.and.arrow.up",
-                    action: onShare
-                )
-                .keyboardShortcut("i", modifiers: [.command, .shift])
-
-                previewActionButton(
                     title: String(localized: "Delete"),
                     systemImage: "trash",
                     isDestructive: true,
@@ -106,36 +99,39 @@ private struct QuickAccessPreviewView: View {
                 )
                 .keyboardShortcut(.delete, modifiers: [])
 
-                Spacer()
+                Menu {
+                    Button {
+                        onShare()
+                    } label: {
+                        Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+                    }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
 
-                previewSaveButton(action: onSave)
-                .keyboardShortcut("s", modifiers: .command)
+                    Button {
+                        onSave()
+                    } label: {
+                        Label {
+                            Text(String(localized: "Save"))
+                        } icon: {
+                            SaveIcon()
+                        }
+                    }
+                    .keyboardShortcut("s", modifiers: .command)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 32, height: 28)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help(String(localized: "More"))
+
+                Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(.bar)
         }
-    }
-
-    private func previewSaveButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label {
-                Text(String(localized: "Save"))
-            } icon: {
-                SaveIcon()
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(buttonFill(isPrimary: true, isDestructive: false))
-            )
-            .foregroundStyle(buttonForeground(isPrimary: true, isDestructive: false))
-        }
-        .buttonStyle(.plain)
-        .help(String(localized: "Save"))
     }
 
     private func previewActionButton(

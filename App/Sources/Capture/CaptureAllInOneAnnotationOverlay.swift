@@ -388,6 +388,8 @@ final class AllInOneAnnotationSession: ObservableObject {
     @Published var textUnderlineEnabled: Bool
     @Published var textAlignment: AnnotationTextAlignment
     @Published var penStyle: PenStyle
+    @Published var arrowHeadStyle: ArrowHeadStyle
+    @Published var shapeKind: ShapeKind
     @Published var lineWidth: CGFloat
     @Published var highlightFocusOpacity: CGFloat
     @Published var strokePattern: StrokePattern
@@ -423,6 +425,8 @@ final class AllInOneAnnotationSession: ObservableObject {
         self.textUnderlineEnabled = UserDefaults.standard.bool(forKey: "annotationTextUnderlineEnabled")
         self.textAlignment = Self.storedTextAlignment()
         self.penStyle = Self.storedPenStyle()
+        self.arrowHeadStyle = Self.storedArrowHeadStyle()
+        self.shapeKind = Self.storedShapeKind()
         self.lineWidth = Self.storedWidth(for: Self.storedTool())
         self.highlightFocusOpacity = Self.storedHighlightFocusOpacity()
         self.strokePattern = Self.storedStrokePattern()
@@ -585,6 +589,12 @@ final class AllInOneAnnotationSession: ObservableObject {
             } else if let freehand = obj as? FreehandObject {
                 freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
                 freehand.style = currentStyle
+            } else if let arrow = obj as? ArrowObject {
+                arrow.headStyle = arrowHeadStyle
+                arrow.style = currentStyle
+            } else if let shape = obj as? ShapeObject {
+                shape.kind = shapeKind
+                shape.style = currentStyle
             } else if obj is HighlightFocusObject {
                 // Already handled above.
             } else {
@@ -703,6 +713,22 @@ final class AllInOneAnnotationSession: ObservableObject {
         return .pen
     }
 
+    private static func storedArrowHeadStyle() -> ArrowHeadStyle {
+        if let raw = UserDefaults.standard.string(forKey: "annotationArrowHeadStyle"),
+           let style = ArrowHeadStyle(rawValue: raw) {
+            return style
+        }
+        return .single
+    }
+
+    private static func storedShapeKind() -> ShapeKind {
+        if let raw = UserDefaults.standard.string(forKey: "annotationShapeKind"),
+           let kind = ShapeKind(rawValue: raw) {
+            return kind
+        }
+        return .triangle
+    }
+
     private static func storedTextFontSize() -> CGFloat {
         CGFloat(UserDefaults.standard.object(forKey: "annotationTextFontSize") as? Double ?? 48)
     }
@@ -750,6 +776,8 @@ private struct AllInOneAnnotationCanvasView: View {
             textUnderline: session.textUnderlineEnabled,
             textAlignment: session.textAlignment,
             penStyle: session.penStyle,
+            arrowHeadStyle: session.arrowHeadStyle,
+            shapeKind: session.shapeKind,
             zoomScale: session.displayScale,
             refreshTrigger: session.refreshTrigger,
             textRegions: session.textRegions,
@@ -941,12 +969,12 @@ private struct AllInOneAnnotationToolbarView: View {
 
     private var primaryTools: [AnnotationTool] {
         session.usesCompactToolbar
-            ? [.select, .arrow, .line, .rectangle, .text, .freehand]
+            ? [.select, .arrow, .line, .rectangle, .ellipse, .shape, .text, .freehand, .highlighter]
             : AnnotationTool.allCases
     }
 
     private var overflowTools: [AnnotationTool] {
-        [.ellipse, .pixelate, .counter, .highlighter, .highlightFocus]
+        [.pixelate, .counter, .highlightFocus]
     }
 
     private var compactStatus: some View {
@@ -1020,15 +1048,112 @@ private struct AllInOneAnnotationToolbarView: View {
                 redactionModeControl
             }
 
-            if showsStrokePatternPicker {
-                StrokePatternPicker(pattern: Binding(
-                    get: { session.strokePattern },
-                    set: {
-                        session.strokePattern = $0
-                        UserDefaults.standard.set($0.rawValue, forKey: "annotationStrokePattern")
-                        session.updateSelectedStyle()
-                    }
-                ), emphasizesOnDark: true)
+            if session.usesCompactToolbar {
+                AnnotationStylePopover(
+                    strokePattern: Binding(
+                        get: { session.strokePattern },
+                        set: {
+                            session.strokePattern = $0
+                            UserDefaults.standard.set($0.rawValue, forKey: "annotationStrokePattern")
+                            session.updateSelectedStyle()
+                        }
+                    ),
+                    filled: Binding(
+                        get: { session.filled },
+                        set: {
+                            session.filled = $0
+                            UserDefaults.standard.set($0, forKey: "annotationFilled")
+                            session.updateSelectedStyle()
+                        }
+                    ),
+                    arrowHeadStyle: Binding(
+                        get: { session.arrowHeadStyle },
+                        set: {
+                            session.arrowHeadStyle = $0
+                            UserDefaults.standard.set($0.rawValue, forKey: "annotationArrowHeadStyle")
+                            session.updateSelectedStyle()
+                        }
+                    ),
+                    shapeKind: Binding(
+                        get: { session.shapeKind },
+                        set: {
+                            session.shapeKind = $0
+                            UserDefaults.standard.set($0.rawValue, forKey: "annotationShapeKind")
+                            session.updateSelectedStyle()
+                        }
+                    ),
+                    showsPattern: showsStrokePatternPicker,
+                    showsArrowHead: session.currentTool == .arrow,
+                    showsShapeKind: session.currentTool == .shape,
+                    showsFill: session.currentTool != .counter
+                        && session.currentTool != .arrow
+                        && session.currentTool != .line
+                        && session.currentTool != .highlighter
+                        && session.currentTool != .highlightFocus
+                        && session.currentTool != .freehand
+                        && session.currentTool != .pixelate
+                        && !isFontSizeMode,
+                    emphasizesOnDark: true
+                )
+            } else {
+                if showsStrokePatternPicker {
+                    StrokePatternPicker(pattern: Binding(
+                        get: { session.strokePattern },
+                        set: {
+                            session.strokePattern = $0
+                            UserDefaults.standard.set($0.rawValue, forKey: "annotationStrokePattern")
+                            session.updateSelectedStyle()
+                        }
+                    ), emphasizesOnDark: true)
+                }
+
+                if session.currentTool == .arrow {
+                    ArrowHeadStylePicker(
+                        headStyle: Binding(
+                            get: { session.arrowHeadStyle },
+                            set: {
+                                session.arrowHeadStyle = $0
+                                UserDefaults.standard.set($0.rawValue, forKey: "annotationArrowHeadStyle")
+                                session.updateSelectedStyle()
+                            }
+                        ),
+                        emphasizesOnDark: true
+                    )
+                }
+
+                if session.currentTool == .shape {
+                    ShapeKindPicker(
+                        kind: Binding(
+                            get: { session.shapeKind },
+                            set: {
+                                session.shapeKind = $0
+                                UserDefaults.standard.set($0.rawValue, forKey: "annotationShapeKind")
+                                session.updateSelectedStyle()
+                            }
+                        ),
+                        emphasizesOnDark: true
+                    )
+                }
+
+                if session.currentTool != .counter
+                    && session.currentTool != .arrow
+                    && session.currentTool != .line
+                    && session.currentTool != .highlighter
+                    && session.currentTool != .highlightFocus
+                    && session.currentTool != .freehand
+                    && session.currentTool != .pixelate
+                    && !isFontSizeMode {
+                    iconButton(
+                        systemName: session.filled ? "square.fill" : "square",
+                        help: "Fill Shape",
+                        isActive: session.filled,
+                        action: {
+                            session.filled.toggle()
+                            UserDefaults.standard.set(session.filled, forKey: "annotationFilled")
+                            session.updateSelectedStyle()
+                        }
+                    )
+                }
             }
 
             if session.currentTool == .freehand {
@@ -1045,26 +1170,6 @@ private struct AllInOneAnnotationToolbarView: View {
             if isFontSizeMode && !session.usesCompactToolbar {
                 textEffectsInlineControls
             }
-
-            if session.currentTool != .counter
-                && session.currentTool != .arrow
-                && session.currentTool != .line
-                && session.currentTool != .highlighter
-                && session.currentTool != .highlightFocus
-                && session.currentTool != .freehand
-                && session.currentTool != .pixelate
-                && !isFontSizeMode {
-                iconButton(
-                    systemName: session.filled ? "square.fill" : "square",
-                    help: "Fill Shape",
-                    isActive: session.filled,
-                    action: {
-                        session.filled.toggle()
-                        UserDefaults.standard.set(session.filled, forKey: "annotationFilled")
-                        session.updateSelectedStyle()
-                    }
-                )
-            }
         }
     }
 
@@ -1072,7 +1177,7 @@ private struct AllInOneAnnotationToolbarView: View {
         switch session.currentTool {
         case .arrow, .line:
             return true
-        case .rectangle, .ellipse:
+        case .rectangle, .ellipse, .shape:
             return !session.filled
         default:
             return false
@@ -1608,6 +1713,7 @@ private struct AllInOneAnnotationToolbarView: View {
         case .line: return "line.diagonal"
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
+        case .shape: return session.shapeKind.systemImage
         case .text: return "textformat"
         case .freehand: return "pencil.tip"
         case .pixelate: return "eye.slash.fill"
@@ -1624,6 +1730,7 @@ private struct AllInOneAnnotationToolbarView: View {
         case .line: return "Line"
         case .rectangle: return "Rectangle (⌃: square)"
         case .ellipse: return "Ellipse (⌃: circle)"
+        case .shape: return "Shape"
         case .text: return "Text"
         case .freehand: return "Draw"
         case .pixelate: return "Pixelate / Blur"
@@ -1640,6 +1747,7 @@ private struct AllInOneAnnotationToolbarView: View {
         case .line: return String(localized: "Line")
         case .rectangle: return String(localized: "Rect")
         case .ellipse: return String(localized: "Oval")
+        case .shape: return String(localized: "Shape")
         case .text: return String(localized: "Text")
         case .freehand: return String(localized: "Draw")
         case .pixelate: return String(localized: "Pixel")

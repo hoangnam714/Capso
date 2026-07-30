@@ -19,6 +19,8 @@ struct AnnotationToolbar: View {
     @Binding var redactionMode: RedactionMode
     @Binding var showBeautifyPanel: Bool
     @Binding var penStyle: PenStyle
+    @Binding var arrowHeadStyle: ArrowHeadStyle
+    @Binding var shapeKind: ShapeKind
     /// Dim overlay opacity for Highlight Focus (0…1).
     @Binding var highlightFocusOpacity: CGFloat
     /// True when an inline text edit is active (either via the text tool or
@@ -38,8 +40,15 @@ struct AnnotationToolbar: View {
     let onCopy: () -> Void
     let onCancel: () -> Void
     let onCrop: () -> Void
+    var onShare: (() -> Void)? = nil
+    var onPin: (() -> Void)? = nil
+    /// Called with the Share button's frame in window coordinates (for share sheet anchoring).
+    var onShareButtonFrameChange: ((CGRect) -> Void)? = nil
     var onInsertImageFromClipboard: (() -> Void)? = nil
     var onInsertImageFromFile: (() -> Void)? = nil
+
+    @State private var showShapeKindPopover = false
+    @State private var showArrowHeadPopover = false
 
     /// Tool that owns the size slider (selection overrides the active tool).
     private var effectiveSizeTool: AnnotationTool {
@@ -104,7 +113,7 @@ struct AnnotationToolbar: View {
             colorSection(density: density)
                 .fixedSize(horizontal: true, vertical: false)
             toolbarDivider
-            strokeGroup
+            strokeGroup(density: density)
                 .fixedSize(horizontal: true, vertical: false)
             toolbarDivider
             cropGroup
@@ -177,17 +186,18 @@ struct AnnotationToolbar: View {
     private static let primaryToolItems: [ToolItem] = [
         ToolItem(tool: .select, icon: "cursorarrow", label: "Select"),
         ToolItem(tool: .arrow, icon: "arrow.up.right", label: "Arrow"),
+        ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
         ToolItem(tool: .rectangle, icon: "rectangle", label: "Rectangle (⌃: square)"),
         ToolItem(tool: .ellipse, icon: "circle", label: "Ellipse (⌃: circle)"),
+        ToolItem(tool: .shape, icon: "seal", label: "Shape"),
         ToolItem(tool: .text, icon: "textformat", label: "Text", isText: true),
         ToolItem(tool: .freehand, icon: "pencil.tip", label: "Draw"),
+        ToolItem(tool: .highlighter, icon: "highlighter", label: "Highlighter"),
         ToolItem(tool: .pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur"),
     ]
 
     private static let secondaryToolItems: [ToolItem] = [
-        ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
         ToolItem(tool: .counter, icon: "number.circle.fill", label: "Counter"),
-        ToolItem(tool: .highlighter, icon: "highlighter", label: "Highlighter"),
         ToolItem(tool: .highlightFocus, icon: "circle.lefthalf.filled", label: "Highlight Focus"),
     ]
 
@@ -197,6 +207,7 @@ struct AnnotationToolbar: View {
         ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
         ToolItem(tool: .rectangle, icon: "rectangle", label: "Rectangle (⌃: square)"),
         ToolItem(tool: .ellipse, icon: "circle", label: "Ellipse (⌃: circle)"),
+        ToolItem(tool: .shape, icon: "seal", label: "Shape"),
         ToolItem(tool: .text, icon: "textformat", label: "Text", isText: true),
         ToolItem(tool: .freehand, icon: "pencil.tip", label: "Draw"),
         ToolItem(tool: .pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur"),
@@ -209,8 +220,56 @@ struct AnnotationToolbar: View {
     private func toolItemButton(_ item: ToolItem) -> some View {
         if item.isText {
             textToolButton
+        } else if item.tool == .shape {
+            shapeToolButton
+        } else if item.tool == .arrow {
+            arrowToolButton
         } else {
             toolButton(item.tool, icon: item.icon, label: item.label)
+        }
+    }
+
+    private var shapeToolButton: some View {
+        Button {
+            currentTool = .shape
+            showShapeKindPopover = true
+        } label: {
+            Image(systemName: shapeKind.systemImage)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(toolbarIconForeground(isActive: currentTool == .shape))
+                .frame(width: 30, height: 26)
+                .background(toolbarButtonBackground(isActive: currentTool == .shape))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(toolbarButtonStroke)
+        }
+        .buttonStyle(.plain)
+        .help("Shape")
+        .popover(isPresented: $showShapeKindPopover, arrowEdge: .bottom) {
+            ShapeKindMenu(kind: $shapeKind) {
+                showShapeKindPopover = false
+            }
+        }
+    }
+
+    private var arrowToolButton: some View {
+        Button {
+            currentTool = .arrow
+            showArrowHeadPopover = true
+        } label: {
+            Image(systemName: arrowHeadStyle == .double ? "arrow.left.and.right" : "arrow.up.right")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(toolbarIconForeground(isActive: currentTool == .arrow))
+                .frame(width: 30, height: 26)
+                .background(toolbarButtonBackground(isActive: currentTool == .arrow))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(toolbarButtonStroke)
+        }
+        .buttonStyle(.plain)
+        .help("Arrow")
+        .popover(isPresented: $showArrowHeadPopover, arrowEdge: .bottom) {
+            ArrowHeadStyleMenu(headStyle: $arrowHeadStyle) {
+                showArrowHeadPopover = false
+            }
         }
     }
 
@@ -219,9 +278,23 @@ struct AnnotationToolbar: View {
             ForEach(items, id: \.tool) { item in
                 Button {
                     currentTool = item.tool
+                    if item.tool == .shape {
+                        showShapeKindPopover = true
+                    } else if item.tool == .arrow {
+                        showArrowHeadPopover = true
+                    }
                 } label: {
                     if item.isText {
                         Text(item.label)
+                    } else if item.tool == .shape {
+                        Label(item.label, systemImage: shapeKind.systemImage)
+                    } else if item.tool == .arrow {
+                        Label(
+                            item.label,
+                            systemImage: arrowHeadStyle == .double
+                                ? "arrow.left.and.right"
+                                : "arrow.up.right"
+                        )
                     } else {
                         Label(item.label, systemImage: item.icon)
                     }
@@ -326,8 +399,9 @@ struct AnnotationToolbar: View {
         .help("Text")
     }
 
-    private var strokeGroup: some View {
-        HStack(spacing: 8) {
+    private func strokeGroup(density: ToolbarDensity) -> some View {
+        let collapseStyle = density != .full
+        return HStack(spacing: 8) {
             if isFontSizeMode {
                 FontSizeControl(size: $lineWidth)
             } else if effectiveSizeTool == .pixelate {
@@ -338,7 +412,7 @@ struct AnnotationToolbar: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(minWidth: 120, idealWidth: 160, maxWidth: 184)
+                .frame(minWidth: collapseStyle ? 100 : 120, idealWidth: collapseStyle ? 120 : 160, maxWidth: 184)
                 .help("Redaction Mode")
 
                 if redactionMode != .solid {
@@ -360,7 +434,7 @@ struct AnnotationToolbar: View {
                     value: $highlightFocusOpacity,
                     range: 0.15...0.90,
                     step: 0.05,
-                    width: 64,
+                    width: collapseStyle ? 52 : 64,
                     valueText: "\(Int(highlightFocusOpacity * 100))%"
                 )
                 LabeledSlider(
@@ -368,7 +442,7 @@ struct AnnotationToolbar: View {
                     value: $lineWidth,
                     range: 0...40,
                     step: 1,
-                    width: 64,
+                    width: collapseStyle ? 52 : 64,
                     valueText: "\(Int(lineWidth))"
                 )
             } else if effectiveSizeTool != .select {
@@ -377,29 +451,34 @@ struct AnnotationToolbar: View {
                     .help("Line Width: \(Int(lineWidth))")
             }
 
-            if showsStrokePatternPicker {
-                StrokePatternPicker(pattern: $strokePattern)
+            if collapseStyle {
+                AnnotationStylePopover(
+                    strokePattern: $strokePattern,
+                    filled: $filled,
+                    arrowHeadStyle: $arrowHeadStyle,
+                    shapeKind: $shapeKind,
+                    showsPattern: showsStrokePatternPicker,
+                    showsArrowHead: false,
+                    showsShapeKind: false,
+                    showsFill: showsFillToggle
+                )
+            } else {
+                if showsStrokePatternPicker {
+                    StrokePatternPicker(pattern: $strokePattern)
+                }
+
+                if showsFillToggle {
+                    Toggle(isOn: $filled) {
+                        Image(systemName: filled ? "square.fill" : "square")
+                            .font(.system(size: 12))
+                    }
+                    .toggleStyle(.button)
+                    .help("Fill Shape")
+                }
             }
 
             if effectiveSizeTool == .freehand {
                 PenStylePicker(penStyle: $penStyle)
-            }
-
-            // Fill toggle is meaningless for counter / highlighter / text / freehand.
-            if effectiveSizeTool != .counter
-                && effectiveSizeTool != .arrow
-                && effectiveSizeTool != .line
-                && effectiveSizeTool != .highlighter
-                && effectiveSizeTool != .highlightFocus
-                && effectiveSizeTool != .freehand
-                && effectiveSizeTool != .select
-                && !isFontSizeMode {
-                Toggle(isOn: $filled) {
-                    Image(systemName: filled ? "square.fill" : "square")
-                        .font(.system(size: 12))
-                }
-                .toggleStyle(.button)
-                .help("Fill Shape")
             }
         }
         .frame(minWidth: 0)
@@ -409,11 +488,22 @@ struct AnnotationToolbar: View {
 
     private var showsStrokePatternPicker: Bool {
         switch effectiveSizeTool {
-        case .arrow, .line, .rectangle, .ellipse:
+        case .arrow, .line, .rectangle, .ellipse, .shape:
             return !filled || effectiveSizeTool == .arrow || effectiveSizeTool == .line
         default:
             return false
         }
+    }
+
+    private var showsFillToggle: Bool {
+        effectiveSizeTool != .counter
+            && effectiveSizeTool != .arrow
+            && effectiveSizeTool != .line
+            && effectiveSizeTool != .highlighter
+            && effectiveSizeTool != .highlightFocus
+            && effectiveSizeTool != .freehand
+            && effectiveSizeTool != .select
+            && !isFontSizeMode
     }
 
     private var textEffectsGroup: some View {
@@ -511,6 +601,19 @@ struct AnnotationToolbar: View {
 
             copyActionButton
 
+            if let onShare {
+                actionButton(icon: "square.and.arrow.up", help: "Share (⇧⌘I)", action: onShare)
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+                    .background(ShareButtonAnchorReader { rect in
+                        onShareButtonFrameChange?(rect)
+                    })
+            }
+
+            if let onPin {
+                actionButton(icon: "pin", help: "Pin (⌘P)", action: onPin)
+                    .keyboardShortcut("p", modifiers: .command)
+            }
+
             saveActionButton
                 .keyboardShortcut("s", modifiers: .command)
         }
@@ -603,6 +706,21 @@ struct AnnotationToolbar: View {
     private func actionButtonStroke(isPrimary: Bool) -> some View {
         RoundedRectangle(cornerRadius: 6, style: .continuous)
             .stroke(isPrimary ? Color.white.opacity(0.18) : Color.primary.opacity(0.08), lineWidth: 0.5)
+    }
+}
+
+/// Reads a SwiftUI view's frame in global coordinates for share-sheet anchoring.
+struct ShareButtonAnchorReader: View {
+    let onChange: (CGRect) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { onChange(geo.frame(in: .global)) }
+                .onChange(of: geo.frame(in: .global)) { _, newValue in
+                    onChange(newValue)
+                }
+        }
     }
 }
 

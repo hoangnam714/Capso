@@ -141,7 +141,7 @@ private struct InlineAnnotationEditorView: View {
     let onCancel: () -> Void
 
     @AppStorage("annotationLastTool") private var currentTool: AnnotationTool = .arrow
-    @AppStorage("annotationLastColor") private var currentColor: AnnotationColor = .red
+    @AppStorage("annotationLastColor") private var drawingColor: AnnotationColor = .red
     @AppStorage("annotationFilled") private var filled: Bool = false
     @AppStorage("annotationShapeWidth") private var savedLineWidth: Double = 3
     @AppStorage("annotationBlockSize") private var savedBlockSize: Double = 12
@@ -160,9 +160,12 @@ private struct InlineAnnotationEditorView: View {
     @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
     @AppStorage("annotationTextAlignment") private var textAlignment: AnnotationTextAlignment = .left
     @AppStorage("annotationPenStyle") private var penStyle: PenStyle = .pen
+    @AppStorage("annotationArrowHeadStyle") private var arrowHeadStyle: ArrowHeadStyle = .single
+    @AppStorage("annotationShapeKind") private var shapeKind: ShapeKind = .triangle
 
     @State private var lineWidth: CGFloat = 3
     @State private var highlightFocusOpacity: CGFloat = HighlightFocusObject.defaultDimOpacity
+    @State private var toolbarColor: AnnotationColor = .red
     @State private var strokePattern: StrokePattern = .solid
     @State private var isEditingText = false
     @State private var refreshTrigger = 0
@@ -191,7 +194,26 @@ private struct InlineAnnotationEditorView: View {
             opacity = 1.0
         }
         return AnnotationKit.StrokeStyle(
-            color: currentColor,
+            color: drawingColor,
+            lineWidth: lineWidth,
+            opacity: opacity,
+            filled: filled || currentTool == .highlightFocus,
+            pattern: strokePattern
+        )
+    }
+
+    private var selectedObjectStyle: AnnotationKit.StrokeStyle {
+        let opacity: CGFloat
+        switch currentTool {
+        case .highlighter:
+            opacity = 0.35
+        case .highlightFocus:
+            opacity = highlightFocusOpacity
+        default:
+            opacity = 1.0
+        }
+        return AnnotationKit.StrokeStyle(
+            color: toolbarColor,
             lineWidth: lineWidth,
             opacity: opacity,
             filled: filled || currentTool == .highlightFocus,
@@ -261,7 +283,8 @@ private struct InlineAnnotationEditorView: View {
         .background(Color.clear)
         .onAppear(perform: handleAppear)
         .onChange(of: currentTool, handleToolChange)
-        .onChange(of: currentColor) { _, _ in updateSelectedStyle() }
+        .onChange(of: toolbarColor, handleToolbarColorChange)
+        .onChange(of: document.selectedObjectID, handleSelectionChange)
         .onChange(of: lineWidth, handleLineWidthChange)
         .onChange(of: highlightFocusOpacity, handleHighlightFocusOpacityChange)
         .onChange(of: strokePattern, handleStrokePatternChange)
@@ -274,6 +297,8 @@ private struct InlineAnnotationEditorView: View {
         .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
         .onChange(of: textAlignment) { _, _ in updateSelectedStyle() }
         .onChange(of: penStyle) { _, _ in updateSelectedStyle() }
+        .onChange(of: arrowHeadStyle) { _, _ in updateSelectedStyle() }
+        .onChange(of: shapeKind) { _, _ in updateSelectedStyle() }
         .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
     }
 
@@ -298,6 +323,8 @@ private struct InlineAnnotationEditorView: View {
             textUnderline: textUnderlineEnabled,
             textAlignment: textAlignment,
             penStyle: penStyle,
+            arrowHeadStyle: arrowHeadStyle,
+            shapeKind: shapeKind,
             zoomScale: displayScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -322,7 +349,7 @@ private struct InlineAnnotationEditorView: View {
     private var toolbar: some View {
         InlineAnnotationToolbar(
             currentTool: $currentTool,
-            currentColor: $currentColor,
+            currentColor: $toolbarColor,
             lineWidth: $lineWidth,
             highlightFocusOpacity: $highlightFocusOpacity,
             strokePattern: $strokePattern,
@@ -336,6 +363,8 @@ private struct InlineAnnotationEditorView: View {
             textAlignment: $textAlignment,
             redactionMode: $redactionMode,
             penStyle: $penStyle,
+            arrowHeadStyle: $arrowHeadStyle,
+            shapeKind: $shapeKind,
             isEditingText: isEditingText,
             canUndo: document.canUndo,
             canRedo: document.canRedo,
@@ -375,14 +404,16 @@ private struct InlineAnnotationEditorView: View {
         lineWidth = savedWidth(for: currentTool)
         highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
         strokePattern = savedStrokePattern
+        toolbarColor = drawingColor
         if currentTool == .highlightFocus {
-            if currentColor != .black && document.highlightFocusObject == nil {
-                currentColor = .black
+            if toolbarColor != .black && document.highlightFocusObject == nil {
+                toolbarColor = .black
+                drawingColor = .black
             }
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
                 style: AnnotationKit.StrokeStyle(
-                    color: currentColor,
+                    color: toolbarColor,
                     lineWidth: 1,
                     opacity: highlightFocusOpacity,
                     filled: true
@@ -403,6 +434,7 @@ private struct InlineAnnotationEditorView: View {
 
     private func handleToolChange(oldTool: AnnotationTool, newTool: AnnotationTool) {
         document.clearSelection()
+        toolbarColor = drawingColor
         persistWidth(lineWidth, for: oldTool)
         lineWidth = savedWidth(for: newTool)
         if oldTool == .highlightFocus, newTool != .highlightFocus {
@@ -410,14 +442,15 @@ private struct InlineAnnotationEditorView: View {
             refreshTrigger += 1
         }
         if newTool == .highlightFocus {
-            if currentColor != .black && document.highlightFocusObject == nil {
-                currentColor = .black
+            if toolbarColor != .black && document.highlightFocusObject == nil {
+                toolbarColor = .black
+                drawingColor = .black
             }
             highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
                 style: AnnotationKit.StrokeStyle(
-                    color: currentColor,
+                    color: toolbarColor,
                     lineWidth: 1,
                     opacity: highlightFocusOpacity,
                     filled: true
@@ -440,6 +473,34 @@ private struct InlineAnnotationEditorView: View {
     private func handleStrokePatternChange(oldValue: StrokePattern, newValue: StrokePattern) {
         savedStrokePattern = newValue
         updateSelectedStyle()
+    }
+
+    private func handleToolbarColorChange(oldValue: AnnotationColor, newValue: AnnotationColor) {
+        if document.selectedObject != nil {
+            updateSelectedStyle()
+        } else {
+            drawingColor = newValue
+        }
+    }
+
+    private func handleSelectionChange(oldValue: ObjectID?, newValue: ObjectID?) {
+        guard let selected = document.selectedObject else {
+            toolbarColor = drawingColor
+            return
+        }
+        toolbarColor = selected.style.color
+        if let arrow = selected as? ArrowObject {
+            arrowHeadStyle = arrow.headStyle
+        }
+        if let shape = selected as? ShapeObject {
+            shapeKind = shape.kind
+        }
+        filled = selected.style.filled
+        strokePattern = selected.style.pattern
+        if lineWidth != selected.style.lineWidth,
+           !(selected is TextObject || selected is CounterObject || selected is PixelateObject || selected is HighlightFocusObject) {
+            lineWidth = selected.style.lineWidth
+        }
     }
 
     private func handleCanvasInteractionChanged(_ isInteracting: Bool) {
@@ -518,7 +579,7 @@ private struct InlineAnnotationEditorView: View {
            currentTool == .highlightFocus || document.selectedObject is HighlightFocusObject {
             spotlight.cornerRadius = lineWidth
             spotlight.style = AnnotationKit.StrokeStyle(
-                color: currentColor,
+                color: toolbarColor,
                 lineWidth: 1,
                 opacity: highlightFocusOpacity,
                 filled: true
@@ -532,11 +593,11 @@ private struct InlineAnnotationEditorView: View {
             if let pixelate = obj as? PixelateObject {
                 pixelate.blockSize = lineWidth
                 pixelate.mode = redactionMode
-                pixelate.style = currentStyle
+                pixelate.style = selectedObjectStyle
             } else if let counter = obj as? CounterObject {
                 counter.radius = lineWidth
                 counter.style = AnnotationKit.StrokeStyle(
-                    color: currentColor,
+                    color: toolbarColor,
                     lineWidth: lineWidth,
                     filled: filled
                 )
@@ -549,14 +610,20 @@ private struct InlineAnnotationEditorView: View {
                 text.isItalic = textItalicEnabled
                 text.isUnderline = textUnderlineEnabled
                 text.alignment = textAlignment
-                text.style = currentStyle
+                text.style = selectedObjectStyle
             } else if let freehand = obj as? FreehandObject {
                 freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
-                freehand.style = currentStyle
+                freehand.style = selectedObjectStyle
+            } else if let arrow = obj as? ArrowObject {
+                arrow.headStyle = arrowHeadStyle
+                arrow.style = selectedObjectStyle
+            } else if let shape = obj as? ShapeObject {
+                shape.kind = shapeKind
+                shape.style = selectedObjectStyle
             } else if obj is HighlightFocusObject {
                 // Already handled above.
             } else {
-                obj.style = currentStyle
+                obj.style = selectedObjectStyle
             }
             refreshTrigger += 1
         }
@@ -630,6 +697,11 @@ private struct InlineAnnotationToolbar: View {
     @Binding var textAlignment: AnnotationTextAlignment
     @Binding var redactionMode: RedactionMode
     @Binding var penStyle: PenStyle
+    @Binding var arrowHeadStyle: ArrowHeadStyle
+    @Binding var shapeKind: ShapeKind
+
+    @State private var showShapeKindPopover = false
+    @State private var showArrowHeadPopover = false
 
     let isEditingText: Bool
     let canUndo: Bool
@@ -648,53 +720,56 @@ private struct InlineAnnotationToolbar: View {
         currentTool == .text || isEditingText
     }
 
+    private enum ToolbarDensity {
+        case full, compact, minimal
+    }
+
+    private static let primaryTools: [AnnotationTool] = [
+        .select, .arrow, .line, .rectangle, .ellipse, .shape,
+        .text, .freehand, .highlighter, .pixelate
+    ]
+
+    private static let secondaryTools: [AnnotationTool] = [
+        .counter, .highlightFocus
+    ]
+
+    private static let allTools: [AnnotationTool] = [
+        .select, .arrow, .line, .rectangle, .ellipse, .shape,
+        .text, .freehand, .pixelate, .counter, .highlighter, .highlightFocus
+    ]
+
+    private static func density(forAvailableWidth width: CGFloat) -> ToolbarDensity {
+        if width >= 780 { return .full }
+        if width >= 520 { return .compact }
+        return .minimal
+    }
+
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    toolButton(.select)
-                    toolButton(.arrow)
-                    toolButton(.line)
-                    toolButton(.rectangle)
-                    toolButton(.ellipse)
-                    toolButton(.text)
-                    toolButton(.freehand)
-                    toolButton(.pixelate)
-                    toolButton(.counter)
-                    toolButton(.highlighter)
-                    toolButton(.highlightFocus)
-                    insertImageButton(
-                        systemName: "doc.on.clipboard",
-                        help: "Paste Image from Clipboard",
-                        action: { onInsertImageFromClipboard?() }
-                    )
-                    insertImageButton(
-                        systemName: "photo.badge.plus",
-                        help: "Insert Image from File…",
-                        action: { onInsertImageFromFile?() }
-                    )
+            GeometryReader { geo in
+                let density = Self.density(forAvailableWidth: geo.size.width)
+                HStack(spacing: density == .minimal ? 6 : 10) {
+                    toolsSection(density: density)
+
+                    divider
+
+                    colorSection(density: density)
+
+                    divider
+
+                    primaryControls(collapseStyle: density != .full)
+
+                    divider
+
+                    undoRedoControls
+
+                    Spacer(minLength: 4)
+
+                    actionControls
                 }
-
-                divider
-
-                AnnotationColorControls(
-                    currentColor: $currentColor,
-                    swatchSize: 17,
-                    selectedRingColor: .white
-                )
-
-                divider
-
-                primaryControls
-
-                divider
-
-                undoRedoControls
-
-                Spacer(minLength: 4)
-
-                actionControls
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: 28)
 
             if isFontSizeMode {
                 textEffectsGroup
@@ -712,7 +787,103 @@ private struct InlineAnnotationToolbar: View {
         .environment(\.colorScheme, .dark)
     }
 
-    private var primaryControls: some View {
+    @ViewBuilder
+    private func toolsSection(density: ToolbarDensity) -> some View {
+        switch density {
+        case .full:
+            HStack(spacing: 4) {
+                ForEach(Self.allTools, id: \.self) { tool in
+                    toolButton(tool)
+                }
+                insertImageButton(
+                    systemName: "doc.on.clipboard",
+                    help: "Paste Image from Clipboard",
+                    action: { onInsertImageFromClipboard?() }
+                )
+                insertImageButton(
+                    systemName: "photo.badge.plus",
+                    help: "Insert Image from File…",
+                    action: { onInsertImageFromFile?() }
+                )
+            }
+        case .compact:
+            HStack(spacing: 4) {
+                ForEach(Self.primaryTools, id: \.self) { tool in
+                    toolButton(tool)
+                }
+                moreToolsMenu(tools: Self.secondaryTools, includeInsertImage: true)
+            }
+        case .minimal:
+            HStack(spacing: 4) {
+                toolButton(currentTool)
+                moreToolsMenu(tools: Self.allTools, includeInsertImage: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func colorSection(density: ToolbarDensity) -> some View {
+        switch density {
+        case .full, .compact:
+            AnnotationColorControls(
+                currentColor: $currentColor,
+                swatchSize: density == .compact ? 15 : 17,
+                selectedRingColor: .white
+            )
+        case .minimal:
+            AnnotationColorControls(
+                currentColor: $currentColor,
+                swatchSize: 15,
+                selectedRingColor: .white,
+                compact: true
+            )
+        }
+    }
+
+    private func moreToolsMenu(tools: [AnnotationTool], includeInsertImage: Bool) -> some View {
+        Menu {
+            ForEach(tools, id: \.self) { tool in
+                Button {
+                    currentTool = tool
+                } label: {
+                    if tool == .text {
+                        Text(helpText(for: tool))
+                    } else {
+                        Label(helpText(for: tool), systemImage: iconName(for: tool))
+                    }
+                }
+            }
+            if includeInsertImage {
+                Divider()
+                Button("Paste Image from Clipboard") {
+                    onInsertImageFromClipboard?()
+                }
+                Button("Insert Image from File…") {
+                    onInsertImageFromFile?()
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 29, height: 28)
+                .background(
+                    isOverflowToolSelected(tools)
+                        ? Color.accentColor.opacity(0.45)
+                        : Color.white.opacity(0.001)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("More Tools")
+    }
+
+    private func isOverflowToolSelected(_ tools: [AnnotationTool]) -> Bool {
+        tools.contains(currentTool) && !Self.primaryTools.contains(currentTool)
+    }
+
+    private func primaryControls(collapseStyle: Bool) -> some View {
         HStack(spacing: 7) {
             if isFontSizeMode {
                 FontSizeControl(size: $lineWidth)
@@ -722,7 +893,7 @@ private struct InlineAnnotationToolbar: View {
                     value: $highlightFocusOpacity,
                     range: 0.15...0.90,
                     step: 0.05,
-                    width: 72,
+                    width: collapseStyle ? 56 : 72,
                     valueText: "\(Int(highlightFocusOpacity * 100))%",
                     emphasizesOnDark: true
                 )
@@ -731,13 +902,13 @@ private struct InlineAnnotationToolbar: View {
                     value: $lineWidth,
                     range: 0...40,
                     step: 1,
-                    width: 72,
+                    width: collapseStyle ? 56 : 72,
                     valueText: "\(Int(lineWidth))",
                     emphasizesOnDark: true
                 )
             } else if !(currentTool == .pixelate && redactionMode == .solid) {
                 Slider(value: $lineWidth, in: sliderRange, step: sliderStep)
-                    .frame(width: 82)
+                    .frame(width: collapseStyle ? 64 : 82)
                     .help(sliderHelp)
             }
 
@@ -749,32 +920,39 @@ private struct InlineAnnotationToolbar: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 168)
+                .frame(width: collapseStyle ? 132 : 168)
                 .help("Redaction Mode")
             }
 
-            if showsStrokePatternPicker {
-                StrokePatternPicker(pattern: $strokePattern, emphasizesOnDark: true)
+            if collapseStyle {
+                AnnotationStylePopover(
+                    strokePattern: $strokePattern,
+                    filled: $filled,
+                    arrowHeadStyle: $arrowHeadStyle,
+                    shapeKind: $shapeKind,
+                    showsPattern: showsStrokePatternPicker,
+                    showsArrowHead: false,
+                    showsShapeKind: false,
+                    showsFill: showsFillToggle,
+                    emphasizesOnDark: true
+                )
+            } else {
+                if showsStrokePatternPicker {
+                    StrokePatternPicker(pattern: $strokePattern, emphasizesOnDark: true)
+                }
+
+                if showsFillToggle {
+                    iconButton(
+                        systemName: filled ? "square.fill" : "square",
+                        help: "Fill Shape",
+                        isActive: filled,
+                        action: { filled.toggle() }
+                    )
+                }
             }
 
             if currentTool == .freehand {
                 PenStylePicker(penStyle: $penStyle)
-            }
-
-            if currentTool != .counter
-                && currentTool != .arrow
-                && currentTool != .line
-                && currentTool != .highlighter
-                && currentTool != .highlightFocus
-                && currentTool != .freehand
-                && currentTool != .pixelate
-                && !isFontSizeMode {
-                iconButton(
-                    systemName: filled ? "square.fill" : "square",
-                    help: "Fill Shape",
-                    isActive: filled,
-                    action: { filled.toggle() }
-                )
             }
         }
     }
@@ -783,11 +961,22 @@ private struct InlineAnnotationToolbar: View {
         switch currentTool {
         case .arrow, .line:
             return true
-        case .rectangle, .ellipse:
+        case .rectangle, .ellipse, .shape:
             return !filled
         default:
             return false
         }
+    }
+
+    private var showsFillToggle: Bool {
+        currentTool != .counter
+            && currentTool != .arrow
+            && currentTool != .line
+            && currentTool != .highlighter
+            && currentTool != .highlightFocus
+            && currentTool != .freehand
+            && currentTool != .pixelate
+            && !isFontSizeMode
     }
 
     private var undoRedoControls: some View {
@@ -910,23 +1099,71 @@ private struct InlineAnnotationToolbar: View {
 
     @ViewBuilder
     private func toolButton(_ tool: AnnotationTool) -> some View {
-        Button(action: { currentTool = tool }) {
-            Group {
-                if tool == .text {
-                    Text(verbatim: "Aa")
-                        .font(.system(size: 13, weight: .semibold))
-                } else {
-                    Image(systemName: iconName(for: tool))
-                        .font(.system(size: 14, weight: .medium))
+        if tool == .shape {
+            shapeToolButton
+        } else if tool == .arrow {
+            arrowToolButton
+        } else {
+            Button(action: { currentTool = tool }) {
+                Group {
+                    if tool == .text {
+                        Text(verbatim: "Aa")
+                            .font(.system(size: 13, weight: .semibold))
+                    } else {
+                        Image(systemName: iconName(for: tool))
+                            .font(.system(size: 14, weight: .medium))
+                    }
                 }
+                .foregroundStyle(.white)
+                .frame(width: 29, height: 28)
+                .background(currentTool == tool ? Color.accentColor.opacity(0.45) : Color.white.opacity(0.001))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
             }
-            .foregroundStyle(.white)
-            .frame(width: 29, height: 28)
-            .background(currentTool == tool ? Color.accentColor.opacity(0.45) : Color.white.opacity(0.001))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .buttonStyle(.plain)
+            .help(helpText(for: tool))
+        }
+    }
+
+    private var shapeToolButton: some View {
+        Button {
+            currentTool = .shape
+            showShapeKindPopover = true
+        } label: {
+            Image(systemName: shapeKind.systemImage)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 29, height: 28)
+                .background(currentTool == .shape ? Color.accentColor.opacity(0.45) : Color.white.opacity(0.001))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .help(helpText(for: tool))
+        .help("Shape")
+        .popover(isPresented: $showShapeKindPopover, arrowEdge: .bottom) {
+            ShapeKindMenu(kind: $shapeKind) {
+                showShapeKindPopover = false
+            }
+        }
+    }
+
+    private var arrowToolButton: some View {
+        Button {
+            currentTool = .arrow
+            showArrowHeadPopover = true
+        } label: {
+            Image(systemName: arrowHeadStyle == .double ? "arrow.left.and.right" : "arrow.up.right")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 29, height: 28)
+                .background(currentTool == .arrow ? Color.accentColor.opacity(0.45) : Color.white.opacity(0.001))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help("Arrow")
+        .popover(isPresented: $showArrowHeadPopover, arrowEdge: .bottom) {
+            ArrowHeadStyleMenu(headStyle: $arrowHeadStyle) {
+                showArrowHeadPopover = false
+            }
+        }
     }
 
     private func insertImageButton(
@@ -999,6 +1236,7 @@ private struct InlineAnnotationToolbar: View {
         case .line: return "line.diagonal"
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
+        case .shape: return shapeKind.systemImage
         case .text: return "textformat"
         case .freehand: return "pencil.tip"
         case .pixelate: return "eye.slash.fill"
@@ -1015,6 +1253,7 @@ private struct InlineAnnotationToolbar: View {
         case .line: return "Line"
         case .rectangle: return "Rectangle (⌃: square)"
         case .ellipse: return "Ellipse (⌃: circle)"
+        case .shape: return "Shape"
         case .text: return "Text"
         case .freehand: return "Draw"
         case .pixelate: return "Pixelate / Blur"

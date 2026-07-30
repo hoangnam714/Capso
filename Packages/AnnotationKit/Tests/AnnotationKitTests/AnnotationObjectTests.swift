@@ -10,11 +10,11 @@ struct AnnotationObjectTests {
     @Test("AnnotationTool has all cases")
     func tools() {
         let tools: [AnnotationTool] = [
-            .select, .arrow, .line, .rectangle, .ellipse, .text,
+            .select, .arrow, .line, .rectangle, .ellipse, .shape, .text,
             .freehand, .pixelate, .counter, .highlighter, .highlightFocus
         ]
-        #expect(tools.count == 11)
-        #expect(AnnotationTool.allCases.count == 11)
+        #expect(tools.count == 12)
+        #expect(AnnotationTool.allCases.count == 12)
     }
 
     @Test("StrokeStyle has defaults")

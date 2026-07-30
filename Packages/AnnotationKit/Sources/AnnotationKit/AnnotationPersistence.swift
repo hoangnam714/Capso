@@ -89,6 +89,7 @@ public enum AnnotationRecord: Codable, Sendable {
     case line(LineRecord)
     case rectangle(RectangleRecord)
     case ellipse(EllipseRecord)
+    case shape(ShapeRecord)
     case text(TextRecord)
     case freehand(FreehandRecord)
     case pixelate(PixelateRecord)
@@ -110,6 +111,8 @@ public enum AnnotationRecord: Codable, Sendable {
             self = .rectangle(RectangleRecord(rectangle))
         case let ellipse as EllipseObject:
             self = .ellipse(EllipseRecord(ellipse))
+        case let shape as ShapeObject:
+            self = .shape(ShapeRecord(shape))
         case let text as TextObject:
             self = .text(TextRecord(text))
         case let freehand as FreehandObject:
@@ -139,6 +142,8 @@ public enum AnnotationRecord: Codable, Sendable {
             self = .rectangle(try RectangleRecord(from: decoder))
         case "ellipse":
             self = .ellipse(try EllipseRecord(from: decoder))
+        case "shape":
+            self = .shape(try ShapeRecord(from: decoder))
         case "text":
             self = .text(try TextRecord(from: decoder))
         case "freehand":
@@ -170,6 +175,8 @@ public enum AnnotationRecord: Codable, Sendable {
             try record.encode(to: encoder)
         case .ellipse(let record):
             try record.encode(to: encoder)
+        case .shape(let record):
+            try record.encode(to: encoder)
         case .text(let record):
             try record.encode(to: encoder)
         case .freehand(let record):
@@ -191,6 +198,7 @@ public enum AnnotationRecord: Codable, Sendable {
         case .line(let record): return record.makeObject()
         case .rectangle(let record): return record.makeObject()
         case .ellipse(let record): return record.makeObject()
+        case .shape(let record): return record.makeObject()
         case .text(let record): return record.makeObject()
         case .freehand(let record): return record.makeObject()
         case .pixelate(let record): return record.makeObject()
@@ -208,6 +216,7 @@ public struct ArrowRecord: Codable, Sendable {
     public var end: CodablePoint
     public var controlPoint: CodablePoint?
     public var headLength: Double
+    public var headStyle: ArrowHeadStyle
 
     public init(_ object: ArrowObject) {
         self.style = object.style
@@ -215,10 +224,43 @@ public struct ArrowRecord: Codable, Sendable {
         self.end = CodablePoint(object.end)
         self.controlPoint = object.controlPoint.map(CodablePoint.init)
         self.headLength = object.headLength
+        self.headStyle = object.headStyle
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? "arrow"
+        style = try container.decode(StrokeStyle.self, forKey: .style)
+        start = try container.decode(CodablePoint.self, forKey: .start)
+        end = try container.decode(CodablePoint.self, forKey: .end)
+        controlPoint = try container.decodeIfPresent(CodablePoint.self, forKey: .controlPoint)
+        headLength = try container.decode(Double.self, forKey: .headLength)
+        // Older sidecars omit headStyle — default to single tip.
+        headStyle = try container.decodeIfPresent(ArrowHeadStyle.self, forKey: .headStyle) ?? .single
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(style, forKey: .style)
+        try container.encode(start, forKey: .start)
+        try container.encode(end, forKey: .end)
+        try container.encodeIfPresent(controlPoint, forKey: .controlPoint)
+        try container.encode(headLength, forKey: .headLength)
+        try container.encode(headStyle, forKey: .headStyle)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, style, start, end, controlPoint, headLength, headStyle
     }
 
     public func makeObject() -> ArrowObject {
-        let object = ArrowObject(start: start.cgPoint, end: end.cgPoint, style: style)
+        let object = ArrowObject(
+            start: start.cgPoint,
+            end: end.cgPoint,
+            style: style,
+            headStyle: headStyle
+        )
         object.controlPoint = controlPoint?.cgPoint
         object.headLength = headLength
         return object
@@ -273,6 +315,23 @@ public struct EllipseRecord: Codable, Sendable {
 
     public func makeObject() -> EllipseObject {
         EllipseObject(rect: rect.cgRect, style: style)
+    }
+}
+
+public struct ShapeRecord: Codable, Sendable {
+    public var type: String = "shape"
+    public var style: StrokeStyle
+    public var rect: CodableRect
+    public var kind: ShapeKind
+
+    public init(_ object: ShapeObject) {
+        self.style = object.style
+        self.rect = CodableRect(object.rect)
+        self.kind = object.kind
+    }
+
+    public func makeObject() -> ShapeObject {
+        ShapeObject(rect: rect.cgRect, kind: kind, style: style)
     }
 }
 

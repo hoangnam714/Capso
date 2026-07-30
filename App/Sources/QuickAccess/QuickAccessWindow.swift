@@ -28,6 +28,8 @@ final class QuickAccessWindow: NSPanel {
     private let settings: AppSettings
     /// The screen this preview is anchored to (where the capture originated).
     let targetScreen: NSScreen
+    /// True while the pointer is over the panel — blocks auto-dismiss.
+    private var isPointerInside = false
 
     init(result: CaptureResult, settings: AppSettings, screen: NSScreen?, shareCoordinator: ShareCoordinator?) {
         self.settings = settings
@@ -85,7 +87,10 @@ final class QuickAccessWindow: NSPanel {
             onTranslate: { [weak self] in self?.onTranslate?() },
             onPin:       { [weak self] in self?.onPin?() },
             onPreview:   { [weak self] in self?.onPreview?() },
-            onClose:     { [weak self] in self?.onClose?() }
+            onClose:     { [weak self] in self?.onClose?() },
+            onHoveringChanged: { [weak self] hovering in
+                self?.handlePointerHover(hovering)
+            }
         )
 
         let hostingView = NSHostingView(rootView: view)
@@ -121,22 +126,36 @@ final class QuickAccessWindow: NSPanel {
             self.animator().alphaValue = 1
         }
 
-        if settings.quickAccessAutoClose {
-            autoDismissTimer = Timer.scheduledTimer(
-                withTimeInterval: TimeInterval(settings.quickAccessAutoCloseInterval),
-                repeats: false
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.onClose?()
-                }
-            }
-        }
+        scheduleAutoDismissIfNeeded()
     }
 
     /// Cancel the auto-dismiss timer (e.g. while presenting the share sheet).
     func cancelAutoDismiss() {
         autoDismissTimer?.invalidate()
         autoDismissTimer = nil
+    }
+
+    private func handlePointerHover(_ hovering: Bool) {
+        isPointerInside = hovering
+        if hovering {
+            cancelAutoDismiss()
+        } else {
+            scheduleAutoDismissIfNeeded()
+        }
+    }
+
+    private func scheduleAutoDismissIfNeeded() {
+        cancelAutoDismiss()
+        guard settings.quickAccessAutoClose, !isPointerInside else { return }
+        autoDismissTimer = Timer.scheduledTimer(
+            withTimeInterval: TimeInterval(settings.quickAccessAutoCloseInterval),
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.isPointerInside else { return }
+                self.onClose?()
+            }
+        }
     }
 
     override func close() {

@@ -20,6 +20,8 @@ struct AnnotationCanvasView: NSViewRepresentable {
     let textUnderline: Bool
     let textAlignment: AnnotationTextAlignment
     let penStyle: PenStyle
+    let arrowHeadStyle: ArrowHeadStyle
+    let shapeKind: ShapeKind
     let zoomScale: CGFloat
     let refreshTrigger: Int
     var textRegions: [CGRect] = []
@@ -37,11 +39,11 @@ struct AnnotationCanvasView: NSViewRepresentable {
 
     /// Tools that stay active after each stroke so the user can keep drawing
     /// without reaching back to the toolbar (issue #75). Shape tools (arrow,
-    /// rectangle, ellipse) and pixelate behave the same way — most users add
+    /// rectangle, ellipse, shape) and pixelate behave the same way — most users add
     /// several in a row. Text and crop intentionally stay one-shot: text has
     /// its own inline-edit flow and crop is naturally one-per-image.
     private static let stickyTools: Set<AnnotationTool> = [
-        .arrow, .line, .rectangle, .ellipse, .pixelate,
+        .arrow, .line, .rectangle, .ellipse, .shape, .pixelate,
         .counter, .freehand, .highlighter, .highlightFocus
     ]
 
@@ -61,6 +63,8 @@ struct AnnotationCanvasView: NSViewRepresentable {
         view.currentTextUnderline = textUnderline
         view.currentTextAlignment = textAlignment
         view.currentPenStyle = penStyle
+        view.currentArrowHeadStyle = arrowHeadStyle
+        view.currentShapeKind = shapeKind
         view.zoomScale = zoomScale
         view.textRegions = textRegions
         view.onDocumentChanged = { onDocumentChanged?() }
@@ -98,6 +102,8 @@ struct AnnotationCanvasView: NSViewRepresentable {
         nsView.currentTextUnderline = textUnderline
         nsView.currentTextAlignment = textAlignment
         nsView.currentPenStyle = penStyle
+        nsView.currentArrowHeadStyle = arrowHeadStyle
+        nsView.currentShapeKind = shapeKind
         nsView.zoomScale = zoomScale
         nsView.textRegions = textRegions
         nsView.onDocumentChanged = { onDocumentChanged?() }

@@ -4,7 +4,133 @@ import CoreGraphics
 import AppKit
 
 public enum AnnotationTool: String, CaseIterable, Sendable {
-    case select, arrow, line, rectangle, ellipse, text, freehand, pixelate, counter, highlighter, highlightFocus
+    case select, arrow, line, rectangle, ellipse, shape, text, freehand, pixelate, counter, highlighter, highlightFocus
+}
+
+/// Arrow tip style. `.single` is the classic tip-at-end; `.double` draws tips at both ends.
+public enum ArrowHeadStyle: String, Codable, CaseIterable, Sendable {
+    case single
+    case double
+
+    public var label: String {
+        switch self {
+        case .single: String(localized: "One Way")
+        case .double: String(localized: "Two Way")
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .single: "arrow.up.right"
+        case .double: "arrow.left.and.right"
+        }
+    }
+}
+
+/// Extra closed shapes drawn via the Shape tool (beyond rectangle / ellipse).
+public enum ShapeKind: String, Codable, CaseIterable, Sendable {
+    case triangle
+    case rightTriangle
+    case invertedTriangle
+    case diamond
+    case trapezoid
+    case parallelogram
+    case pentagon
+    case hexagon
+    case octagon
+    case star
+    case star6
+    case plus
+    case cross
+    case chevron
+    case blockArrow
+    case semicircle
+    case pill
+    case heart
+    case teardrop
+    case crescent
+    case cloud
+    case speechBubble
+    case cloudSpeechBubble
+    case thoughtBubble
+    case banner
+    case cylinder
+    case ring
+    case lightning
+
+    public var label: String {
+        switch self {
+        case .triangle: String(localized: "Triangle")
+        case .rightTriangle: String(localized: "Right Triangle")
+        case .invertedTriangle: String(localized: "Inverted Triangle")
+        case .diamond: String(localized: "Diamond")
+        case .trapezoid: String(localized: "Trapezoid")
+        case .parallelogram: String(localized: "Parallelogram")
+        case .pentagon: String(localized: "Pentagon")
+        case .hexagon: String(localized: "Hexagon")
+        case .octagon: String(localized: "Octagon")
+        case .star: String(localized: "Star")
+        case .star6: String(localized: "6-Point Star")
+        case .plus: String(localized: "Plus")
+        case .cross: String(localized: "Cross")
+        case .chevron: String(localized: "Chevron")
+        case .blockArrow: String(localized: "Block Arrow")
+        case .semicircle: String(localized: "Semicircle")
+        case .pill: String(localized: "Pill")
+        case .heart: String(localized: "Heart")
+        case .teardrop: String(localized: "Teardrop")
+        case .crescent: String(localized: "Crescent")
+        case .cloud: String(localized: "Cloud")
+        case .speechBubble: String(localized: "Speech Bubble")
+        case .cloudSpeechBubble: String(localized: "Cloud Speech")
+        case .thoughtBubble: String(localized: "Thought Bubble")
+        case .banner: String(localized: "Banner")
+        case .cylinder: String(localized: "Cylinder")
+        case .ring: String(localized: "Ring")
+        case .lightning: String(localized: "Lightning")
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .triangle: "triangle"
+        case .rightTriangle: "triangle"
+        case .invertedTriangle: "triangle.tophalf.filled"
+        case .diamond: "diamond"
+        case .trapezoid: "rectangle.portrait"
+        case .parallelogram: "parallelogram"
+        case .pentagon: "pentagon"
+        case .hexagon: "hexagon"
+        case .octagon: "octagon"
+        case .star: "star"
+        case .star6: "seal"
+        case .plus: "plus"
+        case .cross: "xmark"
+        case .chevron: "chevron.right"
+        case .blockArrow: "arrowtriangle.right.fill"
+        case .semicircle: "circle.bottomhalf.filled"
+        case .pill: "capsule"
+        case .heart: "heart"
+        case .teardrop: "drop"
+        case .crescent: "moon"
+        case .cloud: "cloud"
+        case .speechBubble: "bubble.left"
+        case .cloudSpeechBubble: "cloud"
+        case .thoughtBubble: "ellipsis.bubble"
+        case .banner: "flag"
+        case .cylinder: "oval"
+        case .ring: "circle.circle"
+        case .lightning: "bolt"
+        }
+    }
+
+    /// Shapes whose fill uses even-odd so holes (e.g. ring) stay transparent.
+    public var usesEvenOddFill: Bool {
+        switch self {
+        case .ring, .crescent: true
+        default: false
+        }
+    }
 }
 
 public enum RedactionMode: Int, Codable, CaseIterable, Sendable {

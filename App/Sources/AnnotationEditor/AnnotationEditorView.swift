@@ -48,7 +48,7 @@ struct AnnotationEditorView: View {
     // meaning changes with the active tool; it is synced on every change into
     // the correct per-tool store below.
     @AppStorage("annotationLastTool") private var currentTool: AnnotationTool = .arrow
-    @AppStorage("annotationLastColor") private var currentColor: AnnotationColor = .red
+    @AppStorage("annotationLastColor") private var drawingColor: AnnotationColor = .red
     @AppStorage("annotationFilled") private var filled: Bool = false
     @AppStorage("annotationShapeWidth") private var savedLineWidth: Double = 3
     @AppStorage("annotationBlockSize") private var savedBlockSize: Double = 12
@@ -66,12 +66,17 @@ struct AnnotationEditorView: View {
     @AppStorage("annotationTextUnderlineEnabled") private var textUnderlineEnabled: Bool = false
     @AppStorage("annotationTextAlignment") private var textAlignment: AnnotationTextAlignment = .left
     @AppStorage("annotationPenStyle") private var penStyle: PenStyle = .pen
+    @AppStorage("annotationArrowHeadStyle") private var arrowHeadStyle: ArrowHeadStyle = .single
+    @AppStorage("annotationShapeKind") private var shapeKind: ShapeKind = .triangle
     /// Preserved font size for the Text tool. Swapped in/out of `lineWidth`
     /// as the user toggles tools — same pattern as savedBlockSize etc.
     @AppStorage("annotationTextFontSize") private var savedTextFontSize: Double = 48
 
     @State private var lineWidth: CGFloat = 3
     @State private var highlightFocusOpacity: CGFloat = HighlightFocusObject.defaultDimOpacity
+    /// Color shown in the swatches. Tracks the selected object when one is
+    /// selected; otherwise mirrors `drawingColor` for new strokes.
+    @State private var toolbarColor: AnnotationColor = .red
     @State private var strokePattern: StrokePattern = .solid
     /// True while an inline text editor is active. Lets the toolbar show
     /// the font-size slider even when the tool is `.select` (happens when
@@ -153,10 +158,30 @@ struct AnnotationEditorView: View {
             opacity = 1.0
         }
         return AnnotationKit.StrokeStyle(
-            color: currentColor,
+            color: drawingColor,
             lineWidth: lineWidth,
             opacity: opacity,
             filled: filled || currentTool == .highlightFocus,
+            pattern: strokePattern
+        )
+    }
+
+    /// Style applied to the currently selected object (uses that object's color).
+    private var selectedObjectStyle: AnnotationKit.StrokeStyle {
+        let opacity: CGFloat
+        switch sizeControlTool ?? currentTool {
+        case .highlighter:
+            opacity = 0.35
+        case .highlightFocus:
+            opacity = highlightFocusOpacity
+        default:
+            opacity = 1.0
+        }
+        return AnnotationKit.StrokeStyle(
+            color: toolbarColor,
+            lineWidth: lineWidth,
+            opacity: opacity,
+            filled: filled || (sizeControlTool ?? currentTool) == .highlightFocus,
             pattern: strokePattern
         )
     }
@@ -184,6 +209,7 @@ struct AnnotationEditorView: View {
         case is LineObject: return .line
         case is RectangleObject: return .rectangle
         case is EllipseObject: return .ellipse
+        case is ShapeObject: return .shape
         case is HighlightFocusObject: return .highlightFocus
         default: return nil
         }
@@ -293,7 +319,7 @@ struct AnnotationEditorView: View {
     private var toolbar: some View {
         AnnotationToolbar(
             currentTool: $currentTool,
-            currentColor: $currentColor,
+            currentColor: $toolbarColor,
             lineWidth: $lineWidth,
             strokePattern: $strokePattern,
             filled: $filled,
@@ -307,6 +333,8 @@ struct AnnotationEditorView: View {
             redactionMode: $redactionMode,
             showBeautifyPanel: $showBeautifyPanel,
             penStyle: $penStyle,
+            arrowHeadStyle: $arrowHeadStyle,
+            shapeKind: $shapeKind,
             highlightFocusOpacity: $highlightFocusOpacity,
             isEditingText: isEditingText,
             sizeControlTool: sizeControlTool,
@@ -318,6 +346,11 @@ struct AnnotationEditorView: View {
             onCopy: { copy() },
             onCancel: onCancel,
             onCrop: { isCropMode = true },
+            onShare: { share() },
+            onPin: { pin() },
+            onShareButtonFrameChange: { rect in
+                shareButtonFrameInWindow = rect
+            },
             onInsertImageFromClipboard: insertImageFromClipboard,
             onInsertImageFromFile: insertImageFromFile
         )
@@ -348,7 +381,7 @@ struct AnnotationEditorView: View {
             .background(Color(white: 0.12))
             .onAppear { handleCanvasAppear(size: geo.size) }
             .onChange(of: currentTool, handleToolChange)
-            .onChange(of: currentColor) { _, _ in updateSelectedStyle() }
+            .onChange(of: toolbarColor, handleToolbarColorChange)
             .onChange(of: lineWidth, handleLineWidthChange)
             .onChange(of: highlightFocusOpacity, handleHighlightFocusOpacityChange)
             .onChange(of: strokePattern, handleStrokePatternChange)
@@ -361,6 +394,8 @@ struct AnnotationEditorView: View {
             .onChange(of: textUnderlineEnabled) { _, _ in updateSelectedStyle() }
             .onChange(of: textAlignment) { _, _ in updateSelectedStyle() }
             .onChange(of: penStyle) { _, _ in updateSelectedStyle() }
+            .onChange(of: arrowHeadStyle) { _, _ in updateSelectedStyle() }
+            .onChange(of: shapeKind) { _, _ in updateSelectedStyle() }
             .onChange(of: redactionMode) { _, _ in updateSelectedStyle() }
             .onChange(of: beautifySettings.isEnabled) { _, _ in
                 refitToCurrentWindow()
@@ -404,6 +439,8 @@ struct AnnotationEditorView: View {
             textUnderline: textUnderlineEnabled,
             textAlignment: textAlignment,
             penStyle: penStyle,
+            arrowHeadStyle: arrowHeadStyle,
+            shapeKind: shapeKind,
             zoomScale: zoomScale,
             refreshTrigger: refreshTrigger,
             textRegions: textRegions,
@@ -484,23 +521,6 @@ struct AnnotationEditorView: View {
 
             Spacer()
 
-            Button(action: share) {
-                Image(systemName: "square.and.arrow.up")
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut("i", modifiers: [.command, .shift])
-            .help("Share (⇧⌘I)")
-            .background(ShareButtonAnchorReader { rect in
-                shareButtonFrameInWindow = rect
-            })
-
-            Button(action: pin) {
-                Image(systemName: "pin")
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut("p", modifiers: .command)
-            .help("Pin (⌘P)")
-
             Button(action: toggleEditorFullscreen) {
                 Image(systemName: isEditorFullscreen
                       ? "arrow.down.right.and.arrow.up.left"
@@ -560,14 +580,16 @@ struct AnnotationEditorView: View {
         lineWidth = savedWidth(for: currentTool)
         highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
         strokePattern = savedStrokePattern
+        toolbarColor = drawingColor
         if currentTool == .highlightFocus {
-            if currentColor != .black && document.highlightFocusObject == nil {
-                currentColor = .black
+            if toolbarColor != .black && document.highlightFocusObject == nil {
+                toolbarColor = .black
+                drawingColor = .black
             }
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
                 style: AnnotationKit.StrokeStyle(
-                    color: currentColor,
+                    color: toolbarColor,
                     lineWidth: 1,
                     opacity: highlightFocusOpacity,
                     filled: true
@@ -586,6 +608,7 @@ struct AnnotationEditorView: View {
 
     private func handleToolChange(oldTool: AnnotationTool, newTool: AnnotationTool) {
         document.clearSelection()
+        toolbarColor = drawingColor
         persistWidth(lineWidth, for: oldTool)
         lineWidth = savedWidth(for: newTool)
         if oldTool == .highlightFocus, newTool != .highlightFocus {
@@ -594,14 +617,15 @@ struct AnnotationEditorView: View {
         }
         if newTool == .highlightFocus {
             // Default spotlight color is black; user can change via the picker.
-            if currentColor != .black && document.highlightFocusObject == nil {
-                currentColor = .black
+            if toolbarColor != .black && document.highlightFocusObject == nil {
+                toolbarColor = .black
+                drawingColor = .black
             }
             highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
                 style: AnnotationKit.StrokeStyle(
-                    color: currentColor,
+                    color: toolbarColor,
                     lineWidth: 1,
                     opacity: highlightFocusOpacity,
                     filled: true
@@ -622,8 +646,22 @@ struct AnnotationEditorView: View {
     }
 
     private func handleSelectionChange(oldValue: ObjectID?, newValue: ObjectID?) {
-        guard let selected = document.selectedObject else { return }
+        guard let selected = document.selectedObject else {
+            // Deselected — restore the color used for new drawings.
+            toolbarColor = drawingColor
+            return
+        }
         syncToolbar(from: selected)
+    }
+
+    /// Color swatches edit the selected object only; with no selection they
+    /// update the default color for newly drawn strokes.
+    private func handleToolbarColorChange(oldValue: AnnotationColor, newValue: AnnotationColor) {
+        if document.selectedObject != nil {
+            updateSelectedStyle()
+        } else {
+            drawingColor = newValue
+        }
     }
 
     private func syncToolbar(from object: any AnnotationObject) {
@@ -631,7 +669,7 @@ struct AnnotationEditorView: View {
             if lineWidth != text.fontSize {
                 lineWidth = text.fontSize
             }
-            currentColor = text.style.color
+            toolbarColor = text.style.color
             textFillEnabled = text.fillColor != nil
             textOutlineEnabled = text.outlineColor != nil
             textStrokeEnabled = text.glyphStrokeColor != nil
@@ -645,7 +683,7 @@ struct AnnotationEditorView: View {
             if lineWidth != counter.radius {
                 lineWidth = counter.radius
             }
-            currentColor = counter.style.color
+            toolbarColor = counter.style.color
             return
         }
         if let pixelate = object as? PixelateObject {
@@ -662,16 +700,22 @@ struct AnnotationEditorView: View {
             if abs(highlightFocusOpacity - spotlight.style.opacity) > 0.001 {
                 highlightFocusOpacity = spotlight.style.opacity
             }
-            currentColor = spotlight.style.color
+            toolbarColor = spotlight.style.color
             return
         }
         if let freehand = object as? FreehandObject, freehand.style.opacity >= 0.5 {
             penStyle = freehand.penStyle
         }
+        if let arrow = object as? ArrowObject {
+            arrowHeadStyle = arrow.headStyle
+        }
+        if let shape = object as? ShapeObject {
+            shapeKind = shape.kind
+        }
         if lineWidth != object.style.lineWidth {
             lineWidth = object.style.lineWidth
         }
-        currentColor = object.style.color
+        toolbarColor = object.style.color
         filled = object.style.filled
         strokePattern = object.style.pattern
     }
@@ -837,7 +881,7 @@ struct AnnotationEditorView: View {
            currentTool == .highlightFocus || document.selectedObject is HighlightFocusObject {
             spotlight.cornerRadius = lineWidth
             spotlight.style = AnnotationKit.StrokeStyle(
-                color: currentColor,
+                color: toolbarColor,
                 lineWidth: 1,
                 opacity: highlightFocusOpacity,
                 filled: true
@@ -851,10 +895,10 @@ struct AnnotationEditorView: View {
             if let pixelate = obj as? PixelateObject {
                 pixelate.blockSize = lineWidth
                 pixelate.mode = redactionMode
-                pixelate.style = currentStyle
+                pixelate.style = selectedObjectStyle
             } else if let counter = obj as? CounterObject {
                 counter.radius = lineWidth
-                counter.style = AnnotationKit.StrokeStyle(color: currentColor, lineWidth: lineWidth, filled: filled)
+                counter.style = AnnotationKit.StrokeStyle(color: toolbarColor, lineWidth: lineWidth, filled: filled)
             } else if let text = obj as? TextObject {
                 text.fontSize = lineWidth
                 text.fillColor = textFillColor
@@ -864,14 +908,20 @@ struct AnnotationEditorView: View {
                 text.isItalic = textItalicEnabled
                 text.isUnderline = textUnderlineEnabled
                 text.alignment = textAlignment
-                text.style = currentStyle
+                text.style = selectedObjectStyle
             } else if let freehand = obj as? FreehandObject {
                 freehand.penStyle = freehand.style.opacity < 0.5 ? .marker : penStyle
-                freehand.style = currentStyle
+                freehand.style = selectedObjectStyle
+            } else if let arrow = obj as? ArrowObject {
+                arrow.headStyle = arrowHeadStyle
+                arrow.style = selectedObjectStyle
+            } else if let shape = obj as? ShapeObject {
+                shape.kind = shapeKind
+                shape.style = selectedObjectStyle
             } else if obj is HighlightFocusObject {
                 // Already handled above.
             } else {
-                obj.style = currentStyle
+                obj.style = selectedObjectStyle
             }
             refreshTrigger += 1
         }
@@ -993,20 +1043,5 @@ struct AnnotationEditorView: View {
         )
         let windowRect = window.convertFromScreen(appKitScreenRect)
         return content.convert(windowRect, from: nil)
-    }
-}
-
-/// Reads a SwiftUI view's frame in global coordinates for share-sheet anchoring.
-private struct ShareButtonAnchorReader: View {
-    let onChange: (CGRect) -> Void
-
-    var body: some View {
-        GeometryReader { geo in
-            Color.clear
-                .onAppear { onChange(geo.frame(in: .global)) }
-                .onChange(of: geo.frame(in: .global)) { _, newValue in
-                    onChange(newValue)
-                }
-        }
     }
 }

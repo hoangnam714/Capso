@@ -83,7 +83,7 @@ struct HistoryItemView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .padding(6)
 
-                // Hover action buttons
+                // Primary hover actions; Share / Save / Cloud live in More + context menu.
                 if isHovered {
                     HStack(spacing: 4) {
                         if isScreenshot {
@@ -94,11 +94,9 @@ struct HistoryItemView: View {
                         }
                         actionButton("doc.on.doc") { coordinator.copyToClipboard(entry) }
                             .help(String(localized: "Copy"))
-                        actionButton("square.and.arrow.up") { coordinator.shareToApps(entry) }
-                            .help(String(localized: "Share"))
-                        saveActionButton { coordinator.saveToFile(entry) }
-                            .help(String(localized: "Save"))
-                        cloudActionButton
+                        actionButton("trash") { showDeleteConfirm = true }
+                            .help(String(localized: "Delete"))
+                        moreActionsMenu
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -181,33 +179,41 @@ struct HistoryItemView: View {
         }
     }
 
-    // MARK: - Cloud Action Button
+    // MARK: - More Actions
 
-    @ViewBuilder
-    private var cloudActionButton: some View {
-        if let cloudURL = entry.cloudURL {
-            // Already uploaded — show "Copy link" button
-            actionButton("link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(cloudURL, forType: .string)
-            }
-            .help(String(localized: "Copy cloud link"))
-        } else if coordinator.shareCoordinator != nil {
-            // Not uploaded, cloud configured — show upload button
-            if isUploading {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 30, height: 30)
-                    .background(.black.opacity(0.55))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-            } else {
-                actionButton("icloud.and.arrow.up") {
+    private var moreActionsMenu: some View {
+        Menu {
+            Button(String(localized: "Share…")) { coordinator.shareToApps(entry) }
+            Button(String(localized: "Save to…")) { coordinator.saveToFile(entry) }
+
+            if let cloudURL = entry.cloudURL {
+                Button(String(localized: "Copy Cloud Link")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(cloudURL, forType: .string)
+                }
+            } else if coordinator.shareCoordinator != nil {
+                Button(String(localized: "Upload to Cloud")) {
                     Task { await performUpload() }
                 }
-                .help(String(localized: "Upload to cloud"))
             }
+
+            Divider()
+            Button(String(localized: "Show in Finder")) { coordinator.showInFinder(entry) }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                )
         }
-        // No cloud configured → no cloud button
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help(String(localized: "More"))
     }
 
     private func performUpload() async {
@@ -245,8 +251,6 @@ struct HistoryItemView: View {
         case .unknown(let d): return String(localized: "Upload failed: \(d)")
         }
     }
-
-    // MARK: - Cloud Failure Toast
 
     private var cloudFailureToast: some View {
         HStack(spacing: 6) {
@@ -287,22 +291,6 @@ struct HistoryItemView: View {
                         .foregroundStyle(.quaternary)
                 }
         }
-    }
-
-    private func saveActionButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            SaveIcon()
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-                .frame(width: 30, height: 30)
-                .background(.black.opacity(0.55))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
-                )
-        }
-        .buttonStyle(.plain)
     }
 
     private func actionButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
