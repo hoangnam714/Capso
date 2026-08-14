@@ -1,6 +1,140 @@
 import SwiftUI
 import AnnotationKit
 
+/// Shared width budgets for annotation toolbars (window + inline).
+/// Thresholds are derived from measured section widths so density never
+/// activates a layout that is wider than the available space (which caused
+/// color / stroke / hex controls to paint on top of each other).
+enum AnnotationToolbarMetrics {
+    static let toolButtonWidth: CGFloat = 30
+    static let toolButtonSpacing: CGFloat = 4
+    static let actionButtonWidth: CGFloat = 34
+    static let actionButtonSpacing: CGFloat = 6
+    static let dividerWidth: CGFloat = 1
+    static let horizontalPadding: CGFloat = 24
+    static let rowSpacingMinimal: CGFloat = 6
+    static let rowSpacingComfortable: CGFloat = 8
+
+    /// Select + arrow + rect + ellipse + counter + text + More.
+    static let essentialToolCount: CGFloat = 7
+    /// All drawing tools in the full toolbar strip.
+    static let fullToolCount: CGFloat = 12
+    /// Close + Copy + Share + Pin + Save.
+    static let actionButtonCount: CGFloat = 5
+
+    static var essentialToolsWidth: CGFloat {
+        essentialToolCount * toolButtonWidth
+            + (essentialToolCount - 1) * toolButtonSpacing
+    }
+
+    /// Full tool strip + insert-image pair.
+    static var fullToolsWidth: CGFloat {
+        let tools = fullToolCount * toolButtonWidth
+            + (fullToolCount - 1) * toolButtonSpacing
+        let insert = 2 * toolButtonWidth + toolButtonSpacing + dividerWidth
+        return tools + insert
+    }
+
+    /// Active swatch menu + palette + eyedropper.
+    static var compactColorWidth: CGFloat { 72 }
+
+    /// Four swatches + palette + eyedropper (no hex field).
+    static var comfortColorWidth: CGFloat { 148 }
+
+    /// Swatches + palette + eyedropper + hex field.
+    static var fullColorWidth: CGFloat { 210 }
+
+    /// Slider + single Style popover.
+    static var collapsedStrokeWidth: CGFloat { 104 }
+
+    /// Slider + stroke dropdown + arrow dropdown.
+    static var expandedStrokeWidth: CGFloat { 220 }
+
+    /// Crop + Beautify + Undo/Redo pair.
+    static var chromeControlsWidth: CGFloat { 120 }
+
+    static var actionsWidth: CGFloat {
+        actionButtonCount * actionButtonWidth
+            + (actionButtonCount - 1) * actionButtonSpacing
+    }
+
+    private static func rowWidth(
+        tools: CGFloat,
+        color: CGFloat,
+        stroke: CGFloat,
+        chrome: CGFloat,
+        spacing: CGFloat,
+        sectionCount: CGFloat
+    ) -> CGFloat {
+        let sections = tools + color + stroke + chrome + actionsWidth
+        let dividers = (sectionCount - 1) * dividerWidth
+        // sectionCount sections + spacer ⇒ roughly 2*sectionCount gaps.
+        let gaps = (sectionCount * 2 - 1) * spacing + 4
+        return ceil(sections + dividers + gaps + horizontalPadding)
+    }
+
+    /// Narrowest safe window: essentials + tap-color + style popover.
+    static var minimumContentWidth: CGFloat {
+        rowWidth(
+            tools: essentialToolsWidth,
+            color: compactColorWidth,
+            stroke: collapsedStrokeWidth,
+            chrome: chromeControlsWidth,
+            spacing: rowSpacingMinimal,
+            sectionCount: 7
+        )
+    }
+
+    /// Medium layout: essentials + compact swatches + stroke/arrow dropdowns.
+    static var compactContentWidth: CGFloat {
+        rowWidth(
+            tools: essentialToolsWidth,
+            color: comfortColorWidth,
+            stroke: expandedStrokeWidth,
+            chrome: chromeControlsWidth,
+            spacing: rowSpacingComfortable,
+            sectionCount: 7
+        )
+    }
+
+    /// Wide layout: every tool + full color chrome + stroke/arrow dropdowns.
+    static var fullContentWidth: CGFloat {
+        rowWidth(
+            tools: fullToolsWidth,
+            color: fullColorWidth,
+            stroke: expandedStrokeWidth,
+            chrome: chromeControlsWidth,
+            spacing: rowSpacingComfortable,
+            sectionCount: 7
+        )
+    }
+
+    static var minimumWindowWidth: CGFloat { minimumContentWidth }
+    static var minimumWindowHeight: CGFloat { 360 }
+
+    /// Inline floating toolbar: slightly leaner (no beautify chrome).
+    static var minimumInlineToolbarWidth: CGFloat {
+        ceil(
+            essentialToolsWidth
+                + compactColorWidth
+                + collapsedStrokeWidth
+                + 60 // undo
+                + actionsWidth
+                + 5 * dividerWidth
+                + 10 * rowSpacingMinimal
+                + 28 // padding
+        )
+    }
+
+    /// Density cutovers measured against GeometryReader width (inside padding).
+    static func densityBucket(forAvailableWidth width: CGFloat) -> Int {
+        // Compare against content widths minus outer toolbar padding.
+        if width >= fullContentWidth - horizontalPadding { return 2 }
+        if width >= compactContentWidth - horizontalPadding { return 1 }
+        return 0
+    }
+}
+
 /// Font size field with a preset dropdown — replaces the text-size slider.
 struct FontSizeControl: View {
     @Binding var size: CGFloat
@@ -293,6 +427,59 @@ struct ArrowHeadStyleMenu: View {
     }
 }
 
+/// Dropdown for one-way / two-way arrow — same chrome as `StrokePatternPicker`.
+struct ArrowHeadStyleDropdown: View {
+    @Binding var headStyle: ArrowHeadStyle
+    var emphasizesOnDark: Bool = false
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                ArrowHeadGlyph(style: headStyle, width: 36, height: 14)
+                    .foregroundStyle(emphasizesOnDark ? Color.white : Color.primary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(emphasizesOnDark ? Color.white.opacity(0.7) : Color.secondary)
+            }
+            .frame(width: 52, height: 26)
+            .background(optionBackground(isSelected: true))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(
+                        Color.accentColor.opacity(emphasizesOnDark ? 0.9 : 0.85),
+                        lineWidth: 1.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(2)
+        .background(groupBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .help("Arrow Style")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ArrowHeadStyleMenu(headStyle: $headStyle) {
+                isPresented = false
+            }
+        }
+    }
+
+    private var groupBackground: Color {
+        emphasizesOnDark ? Color.white.opacity(0.09) : Color.primary.opacity(0.06)
+    }
+
+    private func optionBackground(isSelected: Bool) -> Color {
+        if isSelected {
+            return Color.accentColor.opacity(emphasizesOnDark ? 0.48 : 0.22)
+        }
+        return emphasizesOnDark ? Color.white.opacity(0.001) : Color.clear
+    }
+}
+
 struct ShapeKindPicker: View {
     @Binding var kind: ShapeKind
     var emphasizesOnDark: Bool = false
@@ -534,21 +721,77 @@ struct AnnotationStylePopover: View {
     }
 
     private var styleMenu: some View {
+        // Flat rows only — nested StrokePatternPicker / ArrowHeadStyleDropdown
+        // popovers were painting over the toolbar on narrow layouts.
         VStack(alignment: .leading, spacing: 12) {
             if showsPattern {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "Stroke"))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    StrokePatternPicker(pattern: $strokePattern)
+                    ForEach(StrokePattern.allCases, id: \.self) { option in
+                        Button {
+                            strokePattern = option
+                            isPresented = false
+                        } label: {
+                            HStack(spacing: 10) {
+                                StrokePatternGlyph(pattern: option, width: 72, height: 16)
+                                    .foregroundStyle(Color.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .opacity(strokePattern == option ? 1 : 0)
+                                    .frame(width: 12)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(strokePattern == option
+                                          ? Color.accentColor.opacity(0.16)
+                                          : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(option.label)
+                    }
                 }
             }
             if showsArrowHead {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "Arrow"))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    ArrowHeadStylePicker(headStyle: $arrowHeadStyle)
+                    ForEach(ArrowHeadStyle.allCases, id: \.self) { style in
+                        Button {
+                            arrowHeadStyle = style
+                            isPresented = false
+                        } label: {
+                            HStack(spacing: 10) {
+                                ArrowHeadGlyph(style: style, width: 44, height: 16)
+                                    .foregroundStyle(Color.primary)
+                                Text(style.label)
+                                    .font(.system(size: 12, weight: .medium))
+                                Spacer(minLength: 8)
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .opacity(arrowHeadStyle == style ? 1 : 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(arrowHeadStyle == style
+                                          ? Color.accentColor.opacity(0.16)
+                                          : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             if showsShapeKind {
@@ -556,7 +799,10 @@ struct AnnotationStylePopover: View {
                     Text(String(localized: "Shape"))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    ShapeKindPicker(kind: $shapeKind)
+                    // Grid menu is itself a popover host — keep selection inline via menu.
+                    ShapeKindMenu(kind: $shapeKind) {
+                        isPresented = false
+                    }
                 }
             }
             if showsFill {

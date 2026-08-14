@@ -54,15 +54,13 @@ final class AnnotationEditorWindow: NSPanel {
         let maxW = screen.visibleFrame.width * 0.8
         let maxH = screen.visibleFrame.height * 0.8
         let chromeH: CGFloat = 110
-        // Wide enough for the compact toolbar on a 13" MacBook (~1280pt wide).
-        // Narrower windows still work via the minimal toolbar density, but we
-        // never open below this so buttons don't overlap on first launch.
-        let minimumWindowWidth: CGFloat = 680
-        let minimumWindowHeight: CGFloat = 360
+        // Derived from essential toolbar chrome so color/style never overlay actions.
+        let minimumWindowWidth = AnnotationToolbarMetrics.minimumWindowWidth
+        let minimumWindowHeight = AnnotationToolbarMetrics.minimumWindowHeight
 
         let scale = min(1.0, min(maxW / max(imgW, 1), (maxH - chromeH) / max(imgH, 1)))
         let preferredW = max(imgW * scale, minimumWindowWidth)
-        let winW = min(preferredW, maxW)
+        let winW = min(max(preferredW, minimumWindowWidth), maxW)
         let winH = max(imgH * scale + chromeH, minimumWindowHeight)
 
         // Center inside the target screen's visibleFrame. `visibleFrame` is

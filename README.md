@@ -173,6 +173,25 @@ xcodegen generate
 xcodebuild -project Capso.xcodeproj -scheme Capso -configuration Release build
 ```
 
+### Build a DMG (local, skip notarization)
+
+For a quick local Release DMG without Apple notarization (fine for testing; Gatekeeper may block downloads on other Macs):
+
+```bash
+./Scripts/build-dmg.sh --skip-notarize
+```
+
+Output lands in `build/Capso-<version>.dmg`.
+
+To also notarize for distribution, omit the flag and set Apple credentials:
+
+```bash
+export TEAM_ID=H26VXS6A6Y
+export APPLE_ID="you@example.com"
+export APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx"   # app-specific password
+./Scripts/build-dmg.sh
+```
+
 ---
 
 ## Architecture

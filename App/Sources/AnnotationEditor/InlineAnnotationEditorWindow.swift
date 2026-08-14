@@ -252,7 +252,10 @@ private struct InlineAnnotationEditorView: View {
     private var toolbarRect: CGRect {
         let margin: CGFloat = 16
         let gap: CGFloat = 12
-        let toolbarWidth = max(360, min(screenSize.width - margin * 2, 880))
+        let toolbarWidth = max(
+            AnnotationToolbarMetrics.minimumInlineToolbarWidth,
+            min(screenSize.width - margin * 2, 880)
+        )
         let toolbarHeight: CGFloat = {
             if currentTool == .text || isEditingText { return 102 }
             if currentTool == .highlightFocus { return 72 }
@@ -701,7 +704,6 @@ private struct InlineAnnotationToolbar: View {
     @Binding var shapeKind: ShapeKind
 
     @State private var showShapeKindPopover = false
-    @State private var showArrowHeadPopover = false
 
     let isEditingText: Bool
     let canUndo: Bool
@@ -725,12 +727,11 @@ private struct InlineAnnotationToolbar: View {
     }
 
     private static let primaryTools: [AnnotationTool] = [
-        .select, .arrow, .line, .rectangle, .ellipse, .shape,
-        .text, .freehand, .highlighter, .pixelate
+        .select, .arrow, .rectangle, .ellipse, .counter, .text
     ]
 
     private static let secondaryTools: [AnnotationTool] = [
-        .counter, .highlightFocus
+        .line, .shape, .freehand, .highlighter, .pixelate, .highlightFocus
     ]
 
     private static let allTools: [AnnotationTool] = [
@@ -739,9 +740,11 @@ private struct InlineAnnotationToolbar: View {
     ]
 
     private static func density(forAvailableWidth width: CGFloat) -> ToolbarDensity {
-        if width >= 780 { return .full }
-        if width >= 520 { return .compact }
-        return .minimal
+        switch AnnotationToolbarMetrics.densityBucket(forAvailableWidth: width) {
+        case 2: return .full
+        case 1: return .compact
+        default: return .minimal
+        }
     }
 
     var body: some View {
@@ -757,7 +760,7 @@ private struct InlineAnnotationToolbar: View {
 
                     divider
 
-                    primaryControls(collapseStyle: density != .full)
+                    primaryControls(density: density)
 
                     divider
 
@@ -766,6 +769,7 @@ private struct InlineAnnotationToolbar: View {
                     Spacer(minLength: 4)
 
                     actionControls
+                        .layoutPriority(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -806,17 +810,12 @@ private struct InlineAnnotationToolbar: View {
                     action: { onInsertImageFromFile?() }
                 )
             }
-        case .compact:
+        case .compact, .minimal:
             HStack(spacing: 4) {
                 ForEach(Self.primaryTools, id: \.self) { tool in
                     toolButton(tool)
                 }
                 moreToolsMenu(tools: Self.secondaryTools, includeInsertImage: true)
-            }
-        case .minimal:
-            HStack(spacing: 4) {
-                toolButton(currentTool)
-                moreToolsMenu(tools: Self.allTools, includeInsertImage: true)
             }
         }
     }
@@ -824,11 +823,18 @@ private struct InlineAnnotationToolbar: View {
     @ViewBuilder
     private func colorSection(density: ToolbarDensity) -> some View {
         switch density {
-        case .full, .compact:
+        case .full:
             AnnotationColorControls(
                 currentColor: $currentColor,
-                swatchSize: density == .compact ? 15 : 17,
+                swatchSize: 17,
                 selectedRingColor: .white
+            )
+        case .compact:
+            AnnotationColorControls(
+                currentColor: $currentColor,
+                swatchSize: 15,
+                selectedRingColor: .white,
+                showsHex: false
             )
         case .minimal:
             AnnotationColorControls(
@@ -883,8 +889,9 @@ private struct InlineAnnotationToolbar: View {
         tools.contains(currentTool) && !Self.primaryTools.contains(currentTool)
     }
 
-    private func primaryControls(collapseStyle: Bool) -> some View {
-        HStack(spacing: 7) {
+    private func primaryControls(density: ToolbarDensity) -> some View {
+        let collapseStyle = density == .minimal
+        return HStack(spacing: 7) {
             if isFontSizeMode {
                 FontSizeControl(size: $lineWidth)
             } else if currentTool == .highlightFocus {
@@ -931,7 +938,7 @@ private struct InlineAnnotationToolbar: View {
                     arrowHeadStyle: $arrowHeadStyle,
                     shapeKind: $shapeKind,
                     showsPattern: showsStrokePatternPicker,
-                    showsArrowHead: false,
+                    showsArrowHead: currentTool == .arrow,
                     showsShapeKind: false,
                     showsFill: showsFillToggle,
                     emphasizesOnDark: true
@@ -939,6 +946,10 @@ private struct InlineAnnotationToolbar: View {
             } else {
                 if showsStrokePatternPicker {
                     StrokePatternPicker(pattern: $strokePattern, emphasizesOnDark: true)
+                }
+
+                if currentTool == .arrow {
+                    ArrowHeadStyleDropdown(headStyle: $arrowHeadStyle, emphasizesOnDark: true)
                 }
 
                 if showsFillToggle {
@@ -1148,7 +1159,6 @@ private struct InlineAnnotationToolbar: View {
     private var arrowToolButton: some View {
         Button {
             currentTool = .arrow
-            showArrowHeadPopover = true
         } label: {
             Image(systemName: arrowHeadStyle == .double ? "arrow.left.and.right" : "arrow.up.right")
                 .font(.system(size: 14, weight: .medium))
@@ -1159,11 +1169,6 @@ private struct InlineAnnotationToolbar: View {
         }
         .buttonStyle(.plain)
         .help("Arrow")
-        .popover(isPresented: $showArrowHeadPopover, arrowEdge: .bottom) {
-            ArrowHeadStyleMenu(headStyle: $arrowHeadStyle) {
-                showArrowHeadPopover = false
-            }
-        }
     }
 
     private func insertImageButton(

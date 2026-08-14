@@ -10,9 +10,12 @@ struct AnnotationColorControls: View {
     var selectedRingColor: Color = .accentColor
     /// When true, show only the active swatch + a color menu (for narrow windows).
     var compact: Bool = false
+    /// Hide the HEX chip (used by the compact density to free horizontal space).
+    var showsHex: Bool = true
 
     @State private var sampler: NSColorSampler?
     @StateObject private var colorPanel = AnnotationColorPanelController()
+    @State private var showCompactColorPopover = false
 
     var body: some View {
         HStack(spacing: spacing) {
@@ -64,7 +67,7 @@ struct AnnotationColorControls: View {
             .buttonStyle(.plain)
             .help("Pick Color From Screen")
 
-            if !compact {
+            if showsHex && !compact {
                 Button(action: copyCurrentHex) {
                     Text(currentColor.hexRGB)
                         .font(.system(size: 11, design: .monospaced))
@@ -80,19 +83,8 @@ struct AnnotationColorControls: View {
     }
 
     private var compactSwatchMenu: some View {
-        Menu {
-            ForEach(AnnotationColor.basicCases, id: \.self) { color in
-                Button {
-                    currentColor = color
-                } label: {
-                    Label {
-                        Text(color.displayName)
-                    } icon: {
-                        Image(systemName: currentColor == color ? "checkmark.circle.fill" : "circle.fill")
-                            .foregroundStyle(Color(cgColor: color.cgColor))
-                    }
-                }
-            }
+        Button {
+            showCompactColorPopover.toggle()
         } label: {
             Circle()
                 .fill(Color(cgColor: currentColor.cgColor))
@@ -101,9 +93,40 @@ struct AnnotationColorControls: View {
                 .overlay(Circle().stroke(Color.black.opacity(0.24), lineWidth: 0.5))
                 .padding(2)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .help("Colors")
+        .popover(isPresented: $showCompactColorPopover, arrowEdge: .bottom) {
+            LazyVGrid(
+                columns: [
+                    GridItem(.fixed(swatchSize + 8), spacing: 6),
+                    GridItem(.fixed(swatchSize + 8), spacing: 6),
+                    GridItem(.fixed(swatchSize + 8), spacing: 6),
+                    GridItem(.fixed(swatchSize + 8), spacing: 6),
+                ],
+                spacing: 6
+            ) {
+                ForEach(AnnotationColor.basicCases, id: \.self) { color in
+                    Button {
+                        currentColor = color
+                        showCompactColorPopover = false
+                    } label: {
+                        Circle()
+                            .fill(Color(cgColor: color.cgColor))
+                            .frame(width: swatchSize, height: swatchSize)
+                            .overlay(
+                                Circle().stroke(
+                                    currentColor == color ? selectedRingColor : Color.black.opacity(0.24),
+                                    lineWidth: currentColor == color ? 2 : 0.5
+                                )
+                            )
+                            .padding(2)
+                    }
+                    .buttonStyle(.plain)
+                    .help(Text(color.displayName))
+                }
+            }
+            .padding(10)
+        }
     }
 
     private func showCustomColorPanel() {

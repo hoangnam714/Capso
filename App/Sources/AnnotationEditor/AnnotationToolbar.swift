@@ -48,7 +48,6 @@ struct AnnotationToolbar: View {
     var onInsertImageFromFile: (() -> Void)? = nil
 
     @State private var showShapeKindPopover = false
-    @State private var showArrowHeadPopover = false
 
     /// Tool that owns the size slider (selection overrides the active tool).
     private var effectiveSizeTool: AnnotationTool {
@@ -89,42 +88,53 @@ struct AnnotationToolbar: View {
     }
 
     private enum ToolbarDensity {
-        /// All drawing tools + full color swatches.
+        /// All drawing tools + full color swatches + stroke/arrow dropdowns.
         case full
-        /// Primary tools inline; secondary tools + insert in a "More" menu.
+        /// Essential tools; comfort swatches; stroke/arrow dropdowns.
         case compact
-        /// Current tool + overflow menu; color dropdown.
+        /// Essential tools; tap-to-pick color; single Style popover.
         case minimal
     }
 
     /// Width budgets measured against the GeometryReader (inside horizontal padding).
-    /// Tuned so a 13" MacBook (~1280pt) always gets a non-overlapping layout.
     private static func density(forAvailableWidth width: CGFloat) -> ToolbarDensity {
-        if width >= 900 { return .full }
-        if width >= 620 { return .compact }
-        return .minimal
+        switch AnnotationToolbarMetrics.densityBucket(forAvailableWidth: width) {
+        case 2: return .full
+        case 1: return .compact
+        default: return .minimal
+        }
     }
 
     private func toolbarRow(density: ToolbarDensity) -> some View {
         HStack(spacing: density == .minimal ? 6 : 8) {
             toolsSection(density: density)
-                .fixedSize(horizontal: true, vertical: false)
+
             toolbarDivider
+
             colorSection(density: density)
-                .fixedSize(horizontal: true, vertical: false)
+
             toolbarDivider
+
             strokeGroup(density: density)
-                .fixedSize(horizontal: true, vertical: false)
+
             toolbarDivider
+
             cropGroup
+
             toolbarDivider
+
             beautifyGroup
+
             toolbarDivider
+
             undoGroup
+
             Spacer(minLength: 8)
+
             actionGroup
-                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -138,19 +148,12 @@ struct AnnotationToolbar: View {
                 toolbarDivider
                 insertImageButtons
             }
-        case .compact:
+        case .compact, .minimal:
             HStack(spacing: 4) {
                 ForEach(Self.primaryToolItems, id: \.tool) { item in
                     toolItemButton(item)
                 }
                 moreToolsMenu(items: Self.secondaryToolItems, includeInsertImage: true)
-            }
-        case .minimal:
-            HStack(spacing: 4) {
-                if let current = Self.allToolItems.first(where: { $0.tool == currentTool }) {
-                    toolItemButton(current)
-                }
-                moreToolsMenu(items: Self.allToolItems, includeInsertImage: true)
             }
         }
     }
@@ -161,10 +164,12 @@ struct AnnotationToolbar: View {
         case .full:
             AnnotationColorControls(currentColor: $currentColor)
         case .compact:
+            // Swatches without hex — keeps stroke dropdowns readable.
             AnnotationColorControls(
                 currentColor: $currentColor,
                 swatchSize: 17,
-                spacing: 2
+                spacing: 2,
+                showsHex: false
             )
         case .minimal:
             AnnotationColorControls(
@@ -183,21 +188,22 @@ struct AnnotationToolbar: View {
         var isText: Bool = false
     }
 
+    /// Always-visible essentials (including at min window width).
     private static let primaryToolItems: [ToolItem] = [
         ToolItem(tool: .select, icon: "cursorarrow", label: "Select"),
         ToolItem(tool: .arrow, icon: "arrow.up.right", label: "Arrow"),
-        ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
         ToolItem(tool: .rectangle, icon: "rectangle", label: "Rectangle (⌃: square)"),
         ToolItem(tool: .ellipse, icon: "circle", label: "Ellipse (⌃: circle)"),
-        ToolItem(tool: .shape, icon: "seal", label: "Shape"),
+        ToolItem(tool: .counter, icon: "number.circle.fill", label: "Counter"),
         ToolItem(tool: .text, icon: "textformat", label: "Text", isText: true),
-        ToolItem(tool: .freehand, icon: "pencil.tip", label: "Draw"),
-        ToolItem(tool: .highlighter, icon: "highlighter", label: "Highlighter"),
-        ToolItem(tool: .pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur"),
     ]
 
     private static let secondaryToolItems: [ToolItem] = [
-        ToolItem(tool: .counter, icon: "number.circle.fill", label: "Counter"),
+        ToolItem(tool: .line, icon: "line.diagonal", label: "Line"),
+        ToolItem(tool: .shape, icon: "seal", label: "Shape"),
+        ToolItem(tool: .freehand, icon: "pencil.tip", label: "Draw"),
+        ToolItem(tool: .highlighter, icon: "highlighter", label: "Highlighter"),
+        ToolItem(tool: .pixelate, icon: "eye.slash.fill", label: "Pixelate / Blur"),
         ToolItem(tool: .highlightFocus, icon: "circle.lefthalf.filled", label: "Highlight Focus"),
     ]
 
@@ -254,7 +260,6 @@ struct AnnotationToolbar: View {
     private var arrowToolButton: some View {
         Button {
             currentTool = .arrow
-            showArrowHeadPopover = true
         } label: {
             Image(systemName: arrowHeadStyle == .double ? "arrow.left.and.right" : "arrow.up.right")
                 .font(.system(size: 14, weight: .medium))
@@ -266,11 +271,6 @@ struct AnnotationToolbar: View {
         }
         .buttonStyle(.plain)
         .help("Arrow")
-        .popover(isPresented: $showArrowHeadPopover, arrowEdge: .bottom) {
-            ArrowHeadStyleMenu(headStyle: $arrowHeadStyle) {
-                showArrowHeadPopover = false
-            }
-        }
     }
 
     private func moreToolsMenu(items: [ToolItem], includeInsertImage: Bool) -> some View {
@@ -280,8 +280,6 @@ struct AnnotationToolbar: View {
                     currentTool = item.tool
                     if item.tool == .shape {
                         showShapeKindPopover = true
-                    } else if item.tool == .arrow {
-                        showArrowHeadPopover = true
                     }
                 } label: {
                     if item.isText {
@@ -400,7 +398,7 @@ struct AnnotationToolbar: View {
     }
 
     private func strokeGroup(density: ToolbarDensity) -> some View {
-        let collapseStyle = density != .full
+        let collapseStyle = density == .minimal
         return HStack(spacing: 8) {
             if isFontSizeMode {
                 FontSizeControl(size: $lineWidth)
@@ -417,16 +415,16 @@ struct AnnotationToolbar: View {
 
                 if redactionMode != .solid {
                     Slider(value: $lineWidth, in: 4...48, step: 2)
-                        .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
+                        .frame(width: collapseStyle ? 56 : 80)
                         .help("Block Size: \(Int(lineWidth))")
                 }
             } else if effectiveSizeTool == .counter {
                 Slider(value: $lineWidth, in: 12...40, step: 1)
-                    .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
+                    .frame(width: collapseStyle ? 56 : 80)
                     .help("Counter Size: \(Int(lineWidth))")
             } else if effectiveSizeTool == .highlighter {
                 Slider(value: $lineWidth, in: 10...100, step: 2)
-                    .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
+                    .frame(width: collapseStyle ? 56 : 80)
                     .help("Highlighter Width: \(Int(lineWidth))")
             } else if effectiveSizeTool == .highlightFocus {
                 LabeledSlider(
@@ -447,24 +445,29 @@ struct AnnotationToolbar: View {
                 )
             } else if effectiveSizeTool != .select {
                 Slider(value: $lineWidth, in: 1...40, step: 1)
-                    .frame(minWidth: 48, idealWidth: 80, maxWidth: 80)
+                    .frame(width: collapseStyle ? 56 : 80)
                     .help("Line Width: \(Int(lineWidth))")
             }
 
             if collapseStyle {
+                // Narrowest chrome: one Style popover (pattern + arrow + fill).
                 AnnotationStylePopover(
                     strokePattern: $strokePattern,
                     filled: $filled,
                     arrowHeadStyle: $arrowHeadStyle,
                     shapeKind: $shapeKind,
                     showsPattern: showsStrokePatternPicker,
-                    showsArrowHead: false,
+                    showsArrowHead: effectiveSizeTool == .arrow,
                     showsShapeKind: false,
                     showsFill: showsFillToggle
                 )
             } else {
                 if showsStrokePatternPicker {
                     StrokePatternPicker(pattern: $strokePattern)
+                }
+
+                if effectiveSizeTool == .arrow {
+                    ArrowHeadStyleDropdown(headStyle: $arrowHeadStyle)
                 }
 
                 if showsFillToggle {
@@ -481,9 +484,6 @@ struct AnnotationToolbar: View {
                 PenStylePicker(penStyle: $penStyle)
             }
         }
-        .frame(minWidth: 0)
-        .layoutPriority(-1)
-        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var showsStrokePatternPicker: Bool {
