@@ -18,6 +18,10 @@ final class HistoryCoordinator {
     private(set) var entries: [HistoryEntry] = []
     private(set) var totalSize: Int64 = 0
     var currentFilter: HistoryFilter = .all
+    /// Selected history items (Cmd/Shift multi-select).
+    private(set) var selectedIDs: Set<UUID> = []
+    /// Anchor used for Shift-click range selection.
+    private var selectionAnchorID: UUID?
     /// Cloud sharing coordinator — set by AppDelegate after creation.
     /// Non-nil only when cloud sharing is configured.
     var shareCoordinator: ShareCoordinator?
@@ -27,6 +31,12 @@ final class HistoryCoordinator {
     private var discardedEntryIDs: Set<UUID> = []
 
     private var historyWindow: HistoryWindow?
+
+    var selectedEntries: [HistoryEntry] {
+        entries.filter { selectedIDs.contains($0.id) }
+    }
+
+    var selectedCount: Int { selectedIDs.count }
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -52,6 +62,12 @@ final class HistoryCoordinator {
         do {
             entries = try store.fetchAll(filter: currentFilter)
             totalSize = try store.totalFileSize()
+            // Drop selections that no longer exist.
+            let valid = Set(entries.map(\.id))
+            selectedIDs = selectedIDs.intersection(valid)
+            if let anchor = selectionAnchorID, !valid.contains(anchor) {
+                selectionAnchorID = selectedIDs.first
+            }
         } catch {
             print("Failed to load history: \(error)")
         }
@@ -59,7 +75,59 @@ final class HistoryCoordinator {
 
     func setFilter(_ filter: HistoryFilter) {
         currentFilter = filter
+        clearSelection()
         loadEntries()
+    }
+
+    // MARK: - Selection
+
+    func clearSelection() {
+        selectedIDs = []
+        selectionAnchorID = nil
+    }
+
+    func isSelected(_ id: UUID) -> Bool {
+        selectedIDs.contains(id)
+    }
+
+    /// Handle a click on a history item with optional modifier keys.
+    func handleItemClick(_ entry: HistoryEntry, commandKey: Bool, shiftKey: Bool) {
+        if shiftKey {
+            let anchor = selectionAnchorID ?? selectedIDs.first ?? entry.id
+            selectRange(from: anchor, to: entry.id)
+            return
+        }
+        if commandKey {
+            if selectedIDs.contains(entry.id) {
+                selectedIDs.remove(entry.id)
+            } else {
+                selectedIDs.insert(entry.id)
+            }
+            selectionAnchorID = entry.id
+            return
+        }
+        selectedIDs = [entry.id]
+        selectionAnchorID = entry.id
+    }
+
+    func selectAllVisible() {
+        selectedIDs = Set(entries.map(\.id))
+        selectionAnchorID = entries.first?.id
+    }
+
+    private func selectRange(from startID: UUID, to endID: UUID) {
+        guard let start = entries.firstIndex(where: { $0.id == startID }),
+              let end = entries.firstIndex(where: { $0.id == endID }) else {
+            selectedIDs = [endID]
+            selectionAnchorID = endID
+            return
+        }
+        let lo = min(start, end)
+        let hi = max(start, end)
+        selectedIDs = Set(entries[lo...hi].map(\.id))
+        if selectionAnchorID == nil {
+            selectionAnchorID = startID
+        }
     }
 
     // MARK: - Cloud URL
@@ -300,12 +368,39 @@ final class HistoryCoordinator {
     // MARK: - Actions
 
     func deleteEntry(_ entry: HistoryEntry) {
+        selectedIDs.remove(entry.id)
         discardCapture(id: entry.id)
+    }
+
+    /// Deletes every currently selected entry.
+    func deleteSelected(alsoDeleteCloud: Bool = false) {
+        let targets = selectedEntries
+        guard !targets.isEmpty else { return }
+        Task { @MainActor in
+            if alsoDeleteCloud {
+                for entry in targets where entry.cloudURL != nil {
+                    await deleteCloudCopy(for: entry)
+                }
+            }
+            for entry in targets {
+                discardedEntryIDs.insert(entry.id)
+                selectedIDs.remove(entry.id)
+                if let store {
+                    try? store.delete(id: entry.id)
+                    let entryDir = store.entriesDirectory
+                        .appendingPathComponent(entry.id.uuidString, isDirectory: true)
+                    try? FileManager.default.removeItem(at: entryDir)
+                }
+            }
+            clearSelection()
+            loadEntries()
+        }
     }
 
     /// Deletes a history capture by ID, including in-flight async saves.
     func discardCapture(id: UUID) {
         discardedEntryIDs.insert(id)
+        selectedIDs.remove(id)
         guard let store else { return }
         do {
             try store.delete(id: id)
@@ -321,6 +416,7 @@ final class HistoryCoordinator {
         guard let store else { return }
         do {
             try HistoryCleanup.clearAll(store: store)
+            clearSelection()
             loadEntries()
         } catch {
             print("Failed to clear history: \(error)")
@@ -357,17 +453,56 @@ final class HistoryCoordinator {
     }
 
     func copyToClipboard(_ entry: HistoryEntry) {
-        guard let sourceURL = fullImageURL(for: entry) else { return }
+        copyEntriesToClipboard([entry])
+    }
+
+    /// Copy the current multi-selection (or a single entry) to the clipboard.
+    func copySelectedToClipboard() {
+        let targets = selectedEntries
+        guard !targets.isEmpty else { return }
+        copyEntriesToClipboard(targets)
+    }
+
+    func copyEntriesToClipboard(_ entries: [HistoryEntry]) {
+        guard !entries.isEmpty else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
-        switch entry.captureMode {
-        case .recording, .gif:
-            pasteboard.writeObjects([sourceURL as NSURL])
+        var images: [NSImage] = []
+        var fileURLs: [NSURL] = []
 
-        case .area, .fullscreen, .window:
-            guard let nsImage = NSImage(contentsOf: sourceURL) else { return }
-            pasteboard.writeObjects([nsImage])
+        for entry in entries {
+            guard let sourceURL = fullImageURL(for: entry) else { continue }
+            switch entry.captureMode {
+            case .recording, .gif:
+                fileURLs.append(sourceURL as NSURL)
+            case .area, .fullscreen, .window:
+                if let nsImage = NSImage(contentsOf: sourceURL) {
+                    images.append(nsImage)
+                } else {
+                    fileURLs.append(sourceURL as NSURL)
+                }
+            }
+        }
+
+        if !images.isEmpty && fileURLs.isEmpty {
+            pasteboard.writeObjects(images)
+        } else if images.isEmpty && !fileURLs.isEmpty {
+            pasteboard.writeObjects(fileURLs)
+        } else if !images.isEmpty || !fileURLs.isEmpty {
+            // Mixed selection: put file URLs so Finder/apps can consume everything.
+            var allURLs = fileURLs
+            for (index, image) in images.enumerated() {
+                let temp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("capso-history-\(index)-\(UUID().uuidString).png")
+                if let tiff = image.tiffRepresentation,
+                   let rep = NSBitmapImageRep(data: tiff),
+                   let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: temp)
+                    allURLs.append(temp as NSURL)
+                }
+            }
+            pasteboard.writeObjects(allURLs)
         }
     }
 

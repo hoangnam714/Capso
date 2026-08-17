@@ -70,7 +70,7 @@ Capso exists to give back to the macOS community and to show what a modern, modu
 - **Fullscreen capture** — one-click full screen
 - **Window capture** — click any window to capture
 - **Scrolling capture** — capture long webpages, chat threads, and documents into one stitched image
-- **Quick Access** — floating preview with copy, save, annotate, OCR, pin, and drag-and-drop
+- **Quick Access** — floating preview with copy, save, annotate, OCR, pin, and drag-and-drop (temporarily hidden while a new capture or recording session is active)
 
 ### Screen Recording
 - **Video (MP4)** and **GIF** recording
@@ -292,10 +292,6 @@ If Capso saves you time, a small tip keeps it growing — every bit funds more p
   &nbsp;
   <a href="https://github.com/sponsors/hoangnam714">
     <img src="https://img.shields.io/badge/GitHub%20Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" />
-  </a>
-  &nbsp;
-  <a href="https://buymeacoffee.com/hoangnam714">
-    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee" />
   </a>
 </p>
 

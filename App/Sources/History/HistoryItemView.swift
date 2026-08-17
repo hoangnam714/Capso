@@ -1,4 +1,5 @@
 // App/Sources/History/HistoryItemView.swift
+import AppKit
 import SwiftUI
 import HistoryKit
 import ShareKit
@@ -16,6 +17,14 @@ struct HistoryItemView: View {
 
     // Delete confirmation
     @State private var showDeleteConfirm = false
+
+    private var isSelected: Bool {
+        coordinator.isSelected(entry.id)
+    }
+
+    private var selectionIncludesThis: Bool {
+        isSelected && coordinator.selectedCount > 1
+    }
 
     private var modeBadge: (String, Color) {
         switch entry.captureMode {
@@ -84,19 +93,31 @@ struct HistoryItemView: View {
                     .padding(6)
 
                 // Primary hover actions; Share / Save / Cloud live in More + context menu.
-                if isHovered {
+                if isHovered || isSelected {
                     HStack(spacing: 4) {
-                        if isScreenshot {
+                        if isScreenshot && !selectionIncludesThis {
                             actionButton("pencil.tip.crop.circle") {
                                 coordinator.openInAnnotation(entry)
                             }
                             .help(String(localized: "Annotate"))
                         }
-                        actionButton("doc.on.doc") { coordinator.copyToClipboard(entry) }
-                            .help(String(localized: "Copy"))
+                        actionButton("doc.on.doc") {
+                            if selectionIncludesThis {
+                                coordinator.copySelectedToClipboard()
+                            } else {
+                                coordinator.copyToClipboard(entry)
+                            }
+                        }
+                        .help(selectionIncludesThis
+                              ? String(localized: "Copy Selected")
+                              : String(localized: "Copy"))
                         actionButton("trash") { showDeleteConfirm = true }
-                            .help(String(localized: "Delete"))
-                        moreActionsMenu
+                            .help(selectionIncludesThis
+                                  ? String(localized: "Delete Selected")
+                                  : String(localized: "Delete"))
+                        if !selectionIncludesThis {
+                            moreActionsMenu
+                        }
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -113,7 +134,12 @@ struct HistoryItemView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(.white.opacity(isHovered ? 0.1 : 0.04), lineWidth: 0.5)
+                    .strokeBorder(
+                        isSelected
+                            ? Color.accentColor.opacity(0.9)
+                            : .white.opacity(isHovered ? 0.1 : 0.04),
+                        lineWidth: isSelected ? 2 : 0.5
+                    )
             )
 
             // Info row
@@ -149,29 +175,54 @@ struct HistoryItemView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
         }
-        .background(.white.opacity(isHovered ? 0.06 : 0.03))
+        .background(
+            isSelected
+                ? Color.accentColor.opacity(0.16)
+                : .white.opacity(isHovered ? 0.06 : 0.03)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(.white.opacity(isHovered ? 0.1 : 0.04), lineWidth: 0.5)
+                .strokeBorder(
+                    isSelected
+                        ? Color.accentColor.opacity(0.75)
+                        : .white.opacity(isHovered ? 0.1 : 0.04),
+                    lineWidth: isSelected ? 1.5 : 0.5
+                )
         )
-        .shadow(color: .black.opacity(isHovered ? 0.2 : 0), radius: 8, y: 2)
-        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .shadow(color: .black.opacity(isHovered || isSelected ? 0.2 : 0), radius: 8, y: 2)
+        .scaleEffect(isHovered && !isSelected ? 1.02 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(.easeInOut(duration: 0.12), value: isSelected)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture {
+            let flags = NSEvent.modifierFlags
+            coordinator.handleItemClick(
+                entry,
+                commandKey: flags.contains(.command),
+                shiftKey: flags.contains(.shift)
+            )
+        }
         .onHover { isHovered = $0 }
         .task(id: entry.id) { await loadThumbnail() }
         .onDisappear { thumbnailImage = nil }
         .contextMenu { contextMenu }
         .sheet(isPresented: $showDeleteConfirm) {
-            DeleteConfirmSheet(
-                entry: entry,
+            let targets = selectionIncludesThis ? coordinator.selectedEntries : [entry]
+            HistoryDeleteConfirmSheet(
+                count: targets.count,
+                hasCloudCopy: targets.contains(where: { $0.cloudURL != nil }),
                 onDelete: { alsoDeleteCloud in
                     showDeleteConfirm = false
-                    Task {
-                        if alsoDeleteCloud {
-                            await coordinator.deleteCloudCopy(for: entry)
+                    if selectionIncludesThis {
+                        coordinator.deleteSelected(alsoDeleteCloud: alsoDeleteCloud)
+                    } else {
+                        Task {
+                            if alsoDeleteCloud {
+                                await coordinator.deleteCloudCopy(for: entry)
+                            }
+                            coordinator.deleteEntry(entry)
                         }
-                        coordinator.deleteEntry(entry)
                     }
                 },
                 onCancel: { showDeleteConfirm = false }
@@ -311,29 +362,38 @@ struct HistoryItemView: View {
 
     @ViewBuilder
     private var contextMenu: some View {
-        if isScreenshot {
-            Button(String(localized: "Annotate")) { coordinator.openInAnnotation(entry) }
-        }
-        Button("Copy to Clipboard") { coordinator.copyToClipboard(entry) }
-        Button(String(localized: "Share…")) { coordinator.shareToApps(entry) }
-        Button("Save to...") { coordinator.saveToFile(entry) }
-
-        if let cloudURL = entry.cloudURL {
-            Button(String(localized: "Copy Cloud Link")) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(cloudURL, forType: .string)
+        if selectionIncludesThis {
+            Button(String(localized: "Copy Selected (\(coordinator.selectedCount))")) {
+                coordinator.copySelectedToClipboard()
             }
-        } else if coordinator.shareCoordinator != nil {
-            Button(String(localized: "Upload to Cloud")) {
-                Task { await performUpload() }
+            Button(String(localized: "Delete Selected (\(coordinator.selectedCount))"), role: .destructive) {
+                showDeleteConfirm = true
             }
-        }
+        } else {
+            if isScreenshot {
+                Button(String(localized: "Annotate")) { coordinator.openInAnnotation(entry) }
+            }
+            Button("Copy to Clipboard") { coordinator.copyToClipboard(entry) }
+            Button(String(localized: "Share…")) { coordinator.shareToApps(entry) }
+            Button("Save to...") { coordinator.saveToFile(entry) }
 
-        Divider()
-        Button("Show in Finder") { coordinator.showInFinder(entry) }
-        Divider()
-        Button("Delete from History", role: .destructive) {
-            showDeleteConfirm = true
+            if let cloudURL = entry.cloudURL {
+                Button(String(localized: "Copy Cloud Link")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(cloudURL, forType: .string)
+                }
+            } else if coordinator.shareCoordinator != nil {
+                Button(String(localized: "Upload to Cloud")) {
+                    Task { await performUpload() }
+                }
+            }
+
+            Divider()
+            Button("Show in Finder") { coordinator.showInFinder(entry) }
+            Divider()
+            Button("Delete from History", role: .destructive) {
+                showDeleteConfirm = true
+            }
         }
     }
 
@@ -349,40 +409,48 @@ struct HistoryItemView: View {
 
 /// A custom sheet used for delete confirmation because SwiftUI's `.alert`
 /// does not support `Toggle` in its action builder.
-/// Shows a "Also delete from cloud" toggle only when the entry has a cloud URL.
-private struct DeleteConfirmSheet: View {
-    let entry: HistoryEntry
+/// Shows a "Also delete from cloud" toggle only when any target has a cloud URL.
+struct HistoryDeleteConfirmSheet: View {
+    let count: Int
+    let hasCloudCopy: Bool
     let onDelete: (Bool) -> Void
     let onCancel: () -> Void
 
     @State private var alsoDeleteFromCloud: Bool
 
-    init(entry: HistoryEntry, onDelete: @escaping (Bool) -> Void, onCancel: @escaping () -> Void) {
-        self.entry = entry
+    init(
+        count: Int,
+        hasCloudCopy: Bool,
+        onDelete: @escaping (Bool) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.count = count
+        self.hasCloudCopy = hasCloudCopy
         self.onDelete = onDelete
         self.onCancel = onCancel
-        // Default to true (delete cloud copy) if one exists
-        _alsoDeleteFromCloud = State(initialValue: entry.cloudURL != nil)
+        _alsoDeleteFromCloud = State(initialValue: hasCloudCopy)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Delete capture?")
+                Text(count > 1
+                      ? String(localized: "Delete \(count) captures?")
+                      : String(localized: "Delete capture?"))
                     .font(.system(size: 14, weight: .semibold))
 
-                if entry.cloudURL != nil {
-                    Text("This will remove the capture from this Mac. You can also remove the cloud copy.")
+                if hasCloudCopy {
+                    Text(String(localized: "This will remove the capture(s) from this Mac. You can also remove cloud copies."))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("This will remove the capture from this Mac.")
+                    Text(String(localized: "This will remove the capture(s) from this Mac."))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if entry.cloudURL != nil {
+            if hasCloudCopy {
                 Toggle(isOn: $alsoDeleteFromCloud) {
                     Text("Also delete from cloud")
                         .font(.system(size: 12))
@@ -395,12 +463,12 @@ private struct DeleteConfirmSheet: View {
                 Button(String(localized: "Cancel")) {
                     onCancel()
                 }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(.cancelAction)
 
                 Button(String(localized: "Delete")) {
                     onDelete(alsoDeleteFromCloud)
                 }
-                .keyboardShortcut(.return, modifiers: .command)
+                .keyboardShortcut(.defaultAction)
                 .foregroundStyle(.red)
                 .buttonStyle(.borderedProminent)
                 .tint(.red.opacity(0.85))

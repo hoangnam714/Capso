@@ -84,11 +84,11 @@ final class ScrollCaptureOverlay {
             guard let self else { return event }
 
             switch event.keyCode {
-            case 53: // ESC
+            case 53: // ESC — always cancel / exit
                 self.onCancel?()
-                return nil // consume the event
+                return nil
             case 36, 76: // Return, keypad Enter
-                self.startCaptureFromKeyboard()
+                self.handlePrimaryKey()
                 return nil
             default:
                 return event
@@ -96,9 +96,14 @@ final class ScrollCaptureOverlay {
         }
 
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return } // ESC
-            Task { @MainActor in
-                self?.onCancel?()
+            guard let self else { return }
+            switch event.keyCode {
+            case 53:
+                Task { @MainActor in self.onCancel?() }
+            case 36, 76:
+                Task { @MainActor in self.handlePrimaryKey() }
+            default:
+                break
             }
         }
 
@@ -130,7 +135,7 @@ final class ScrollCaptureOverlay {
                     if keyCode == 53 {
                         overlay.onCancel?()
                     } else {
-                        overlay.startCaptureFromKeyboard()
+                        overlay.handlePrimaryKey()
                     }
                 }
                 return nil
@@ -147,9 +152,13 @@ final class ScrollCaptureOverlay {
         keyEventTapRunLoopSource = source
     }
 
-    private func startCaptureFromKeyboard() {
-        guard !viewModel.isCapturing else { return }
-        onStart?()
+    /// Enter: Start when idle, Done when capturing.
+    private func handlePrimaryKey() {
+        if viewModel.isCapturing {
+            onDone?()
+        } else {
+            onStart?()
+        }
     }
 
     // MARK: - Border
@@ -181,8 +190,8 @@ final class ScrollCaptureOverlay {
     // MARK: - Controls
 
     private func showControls(screenRect: NSRect, screen: NSScreen) {
-        let controlsWidth: CGFloat = 300
-        let controlsHeight: CGFloat = 52
+        let controlsWidth: CGFloat = 360
+        let controlsHeight: CGFloat = 64
         let gap: CGFloat = 10
 
         // Try below the selection first
@@ -308,12 +317,12 @@ final class ScrollCaptureViewModel {
 
     var statusText: String {
         if !isCapturing {
-            return String(localized: "Click Start, then scroll")
+            return String(localized: "Enter to start · Esc to exit")
         }
-        if frameCount == 0 {
-            return String(localized: "Scroll slowly to capture")
+        if frameCount <= 1 {
+            return String(localized: "Scroll down slowly · Enter = Done · Esc = Cancel")
         }
-        return "\(currentHeight)px · \(frameCount) frames"
+        return String(localized: "\(currentHeight)px · \(frameCount) frames · Enter Done · Esc Cancel")
     }
 }
 
@@ -326,52 +335,81 @@ struct ScrollCaptureControlsView: View {
     let onDone: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            controlButton(
-                icon: "xmark",
-                label: String(localized: "Cancel"),
-                color: .white.opacity(0.15),
-                action: onCancel
-            )
+        VStack(spacing: 4) {
+            HStack(spacing: 10) {
+                controlButton(
+                    icon: "xmark",
+                    label: viewModel.isCapturing
+                        ? String(localized: "Cancel")
+                        : String(localized: "Exit"),
+                    shortcut: "Esc",
+                    color: .white.opacity(0.18),
+                    action: onCancel
+                )
 
-            if viewModel.isCapturing {
-                controlButton(
-                    icon: "checkmark",
-                    label: String(localized: "Done"),
-                    color: Color.accentColor,
-                    action: onDone
-                )
-            } else {
-                controlButton(
-                    icon: "play.fill",
-                    label: String(localized: "Start Capture"),
-                    color: Color.green,
-                    action: onStart
-                )
+                if viewModel.isCapturing {
+                    controlButton(
+                        icon: "checkmark",
+                        label: String(localized: "Done"),
+                        shortcut: "⏎",
+                        color: Color.accentColor,
+                        action: onDone
+                    )
+                } else {
+                    controlButton(
+                        icon: "play.fill",
+                        label: String(localized: "Start"),
+                        shortcut: "⏎",
+                        color: Color.green,
+                        action: onStart
+                    )
+                }
             }
+
+            Text(viewModel.isCapturing
+                 ? String(localized: "Scroll the page, then press Enter or Done")
+                 : String(localized: "Press Enter to start capturing"))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
         }
-        .padding(8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .environment(\.colorScheme, .dark)
     }
 
-    private func controlButton(icon: String, label: String, color: Color, action: @escaping () -> Void) -> some View {
+    private func controlButton(
+        icon: String,
+        label: String,
+        shortcut: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
                 Text(label)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .fixedSize()
+                Text(shortcut)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(.white.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(color)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .help("\(label) (\(shortcut))")
     }
 }
 

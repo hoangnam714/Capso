@@ -30,6 +30,8 @@ final class RecordingCoordinator {
     let recorder = ScreenRecorder()
     let cameraManager = CameraManager()
     var historyCoordinator: HistoryCoordinator?
+    /// Used to temporarily hide Quick Access mini-previews during recording.
+    weak var captureCoordinator: CaptureCoordinator?
 
     private var overlayWindows: [CaptureOverlayWindow] = []
     private var toolbarWindow: RecordingToolbarWindow?
@@ -70,6 +72,7 @@ final class RecordingCoordinator {
 
     /// Start the recording flow: show overlay for area selection.
     func startRecordingFlow() {
+        captureCoordinator?.hideQuickAccessPreviewsTemporarily()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
             if self.showRememberedRecordingArea() {
@@ -80,6 +83,7 @@ final class RecordingCoordinator {
     }
 
     func startRecordingFlow(withSelectedArea rect: CGRect, screen: NSScreen) {
+        captureCoordinator?.hideQuickAccessPreviewsTemporarily()
         dismissOverlay()
         dismissToolbarUI()
         handleAreaSelected(rect: rect, screen: screen)
@@ -132,6 +136,7 @@ final class RecordingCoordinator {
             overlay.onCancelled = { [weak self] in
                 self?.dismissOverlay()
                 self?.selectedTarget = nil
+                self?.captureCoordinator?.restoreQuickAccessPreviews()
             }
             overlay.onSpaceToggle = onSpaceToggle
             overlay.activate(mode: mode)
@@ -403,6 +408,7 @@ final class RecordingCoordinator {
         countdownWindow = nil
         dismissToolbarUI()
         selectedTarget = nil
+        captureCoordinator?.restoreQuickAccessPreviews()
     }
 
     private func dismissToolbarUI(keepCamera: Bool = false, removeEscapeMonitors shouldRemoveEscapeMonitors: Bool = true) {
@@ -575,6 +581,8 @@ final class RecordingCoordinator {
                 // Discard temp file — restart should not show preview.
                 try? FileManager.default.removeItem(at: result.fileURL)
                 hideRecordingUI()
+                // Keep Quick Access hidden while the new take starts.
+                captureCoordinator?.hideQuickAccessPreviewsTemporarily()
 
                 startRecording(
                     format: format,
@@ -990,6 +998,7 @@ final class RecordingCoordinator {
         cameraPiPWindow?.close()
         cameraPiPWindow = nil
         cameraManager.stop()
+        captureCoordinator?.restoreQuickAccessPreviews()
     }
 
     private func saveRecordingToHistory(url: URL, format: RecordingKit.RecordingFormat) {

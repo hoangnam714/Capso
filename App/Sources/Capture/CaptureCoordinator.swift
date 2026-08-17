@@ -556,6 +556,7 @@ final class CaptureCoordinator {
             overlay.onCancelled = { [weak self] in
                 self?.pendingSourceApplication = nil
                 self?.dismissOverlay()
+                self?.restoreQuickAccessPreviews()
             }
             overlay.activate(mode: mode)
             overlayWindows.append(overlay)
@@ -607,6 +608,7 @@ final class CaptureCoordinator {
             overlay.onCancelled = { [weak self] in
                 self?.pendingSourceApplication = nil
                 self?.dismissOverlay()
+                self?.restoreQuickAccessPreviews()
             }
             overlay.activate(mode: .area)
             overlayWindows.append(overlay)
@@ -790,6 +792,7 @@ final class CaptureCoordinator {
             self?.pendingSourceApplication = nil
             self?.dismissAllInOneToolbar()
             self?.dismissFreezeWindows()
+            self?.restoreQuickAccessPreviews()
         }
 
         allInOneToolbarWindow = toolbar
@@ -822,6 +825,7 @@ final class CaptureCoordinator {
                 self?.selfTimerHUD = nil
                 // Reset pendingAction; the user explicitly bailed.
                 self?.pendingAction = .default
+                self?.restoreQuickAccessPreviews()
             }
         )
     }
@@ -876,6 +880,7 @@ final class CaptureCoordinator {
             overlay.onCancelled = { [weak self] in
                 self?.pendingSourceApplication = nil
                 self?.dismissOverlay()
+                self?.restoreQuickAccessPreviews()
             }
             overlay.activate(mode: mode)
             overlayWindows.append(overlay)
@@ -1210,6 +1215,7 @@ final class CaptureCoordinator {
         scrollCaptureOverlay?.close()
         scrollCaptureOverlay = nil
         scrollCaptureController = nil
+        restoreQuickAccessPreviews()
     }
 
     private func performAreaCapture(rect: CGRect, screen: NSScreen) {
@@ -1476,6 +1482,10 @@ final class CaptureCoordinator {
     }
 
     private func handleCaptureResult(_ capturedResult: CaptureResult) {
+        // Session is done — bring back any Quick Access previews that were
+        // hidden when the capture started (new preview may also be appended).
+        restoreQuickAccessPreviews()
+
         let result = captureResultWithPendingSource(capturedResult)
         let outputResult = timestampedResultIfNeeded(result)
         lastCaptureResult = result
@@ -2224,8 +2234,27 @@ final class CaptureCoordinator {
         CaptureDiagnostics.breadcrumb(
             "session.begin \(phase) id=\(id.uuidString.prefix(8)) displays=\(NSScreen.screens.count)"
         )
+        // Hide lingering Quick Access previews so they aren't baked into the
+        // freeze-frame backdrop or the user's next capture selection.
+        hideQuickAccessPreviewsTemporarily()
         cancelInFlightCaptureUI()
         return id
+    }
+
+    /// Hide all floating Quick Access mini-previews without dismissing them.
+    /// Used when a new capture or recording session starts.
+    func hideQuickAccessPreviewsTemporarily() {
+        for window in quickAccessWindows {
+            window.setTemporarilyHidden(true)
+        }
+        quickAccessPreviewWindow?.orderOut(nil)
+    }
+
+    /// Bring back Quick Access previews that were hidden for a capture/recording session.
+    func restoreQuickAccessPreviews() {
+        for window in quickAccessWindows {
+            window.setTemporarilyHidden(false)
+        }
     }
 
     private func isCurrentSession(_ id: UUID) -> Bool {

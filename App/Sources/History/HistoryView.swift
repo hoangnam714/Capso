@@ -4,6 +4,7 @@ import HistoryKit
 
 struct HistoryView: View {
     let coordinator: HistoryCoordinator
+    @State private var showBulkDeleteConfirm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +41,9 @@ struct HistoryView: View {
                         }
                         .padding(16)
                     }
+                    .onTapGesture {
+                        // Click empty chrome clears selection (item taps consume their own).
+                    }
                 }
             }
 
@@ -47,6 +51,37 @@ struct HistoryView: View {
             statusBar
         }
         .onAppear { coordinator.loadEntries() }
+        .background {
+            // Invisible buttons host global shortcuts for the history window.
+            Button("") { coordinator.selectAllVisible() }
+                .keyboardShortcut("a", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+            Button("") {
+                if coordinator.selectedCount > 0 {
+                    showBulkDeleteConfirm = true
+                }
+            }
+            .keyboardShortcut(.delete, modifiers: [])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            Button("") { coordinator.clearSelection() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
+        .sheet(isPresented: $showBulkDeleteConfirm) {
+            let targets = coordinator.selectedEntries
+            HistoryDeleteConfirmSheet(
+                count: targets.count,
+                hasCloudCopy: targets.contains(where: { $0.cloudURL != nil }),
+                onDelete: { alsoDeleteCloud in
+                    showBulkDeleteConfirm = false
+                    coordinator.deleteSelected(alsoDeleteCloud: alsoDeleteCloud)
+                },
+                onCancel: { showBulkDeleteConfirm = false }
+            )
+        }
     }
 
     // MARK: - Grouping
@@ -135,6 +170,44 @@ struct HistoryView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
 
             Spacer()
+
+            if coordinator.selectedCount > 0 {
+                Text("\(coordinator.selectedCount) selected")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    coordinator.copySelectedToClipboard()
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help(String(localized: "Copy Selected"))
+                .keyboardShortcut("c", modifiers: .command)
+
+                Button {
+                    showBulkDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.red.opacity(0.85))
+                .help(String(localized: "Delete Selected"))
+
+                Button {
+                    coordinator.clearSelection()
+                } label: {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help(String(localized: "Clear Selection"))
+                .keyboardShortcut(.escape, modifiers: [])
+            }
 
             Button {
                 coordinator.annotateFromClipboard()
@@ -230,6 +303,13 @@ struct HistoryView: View {
 
     private var statusBar: some View {
         HStack(spacing: 6) {
+            if coordinator.selectedCount > 0 {
+                Text("\(coordinator.selectedCount) selected")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("·")
+                    .foregroundStyle(.quaternary)
+            }
             Text("\(coordinator.entries.count) items")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)

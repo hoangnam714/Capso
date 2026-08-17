@@ -913,22 +913,37 @@ private struct InlineAnnotationToolbar: View {
                     valueText: "\(Int(lineWidth))",
                     emphasizesOnDark: true
                 )
-            } else if !(currentTool == .pixelate && redactionMode == .solid) {
+            } else if currentTool == .pixelate {
+                if collapseStyle {
+                    RedactionModeMenu(mode: $redactionMode, emphasizesOnDark: true)
+                    if redactionMode != .solid {
+                        Slider(value: $lineWidth, in: sliderRange, step: sliderStep)
+                            .frame(width: 56)
+                            .layoutPriority(1)
+                            .help(sliderHelp)
+                    }
+                } else {
+                    Picker("", selection: $redactionMode) {
+                        ForEach(RedactionMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 168)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help("Redaction Mode")
+
+                    if redactionMode != .solid {
+                        Slider(value: $lineWidth, in: sliderRange, step: sliderStep)
+                            .frame(width: 82)
+                            .help(sliderHelp)
+                    }
+                }
+            } else {
                 Slider(value: $lineWidth, in: sliderRange, step: sliderStep)
                     .frame(width: collapseStyle ? 64 : 82)
                     .help(sliderHelp)
-            }
-
-            if currentTool == .pixelate {
-                Picker("", selection: $redactionMode) {
-                    ForEach(RedactionMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: collapseStyle ? 132 : 168)
-                .help("Redaction Mode")
             }
 
             if collapseStyle {

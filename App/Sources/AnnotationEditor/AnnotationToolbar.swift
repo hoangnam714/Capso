@@ -403,20 +403,33 @@ struct AnnotationToolbar: View {
             if isFontSizeMode {
                 FontSizeControl(size: $lineWidth)
             } else if effectiveSizeTool == .pixelate {
-                Picker("", selection: $redactionMode) {
-                    ForEach(RedactionMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
+                if collapseStyle {
+                    // Mini: menu + short slider — segmented Pixelate/Blur/Solid
+                    // was wider than the stroke budget and overlapped the thumb.
+                    RedactionModeMenu(mode: $redactionMode)
+                    if redactionMode != .solid {
+                        Slider(value: $lineWidth, in: 4...48, step: 2)
+                            .frame(width: 56)
+                            .layoutPriority(1)
+                            .help("Block Size: \(Int(lineWidth))")
                     }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(minWidth: collapseStyle ? 100 : 120, idealWidth: collapseStyle ? 120 : 160, maxWidth: 184)
-                .help("Redaction Mode")
+                } else {
+                    Picker("", selection: $redactionMode) {
+                        ForEach(RedactionMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(minWidth: 120, idealWidth: 160, maxWidth: 184)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .help("Redaction Mode")
 
-                if redactionMode != .solid {
-                    Slider(value: $lineWidth, in: 4...48, step: 2)
-                        .frame(width: collapseStyle ? 56 : 80)
-                        .help("Block Size: \(Int(lineWidth))")
+                    if redactionMode != .solid {
+                        Slider(value: $lineWidth, in: 4...48, step: 2)
+                            .frame(width: 80)
+                            .help("Block Size: \(Int(lineWidth))")
+                    }
                 }
             } else if effectiveSizeTool == .counter {
                 Slider(value: $lineWidth, in: 12...40, step: 1)
@@ -502,6 +515,7 @@ struct AnnotationToolbar: View {
             && effectiveSizeTool != .highlighter
             && effectiveSizeTool != .highlightFocus
             && effectiveSizeTool != .freehand
+            && effectiveSizeTool != .pixelate
             && effectiveSizeTool != .select
             && !isFontSizeMode
     }

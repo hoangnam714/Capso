@@ -309,6 +309,96 @@ struct PenStylePicker: View {
     }
 }
 
+/// Compact Pixelate / Blur / Solid picker for narrow (mini) toolbars.
+/// Avoids the wide segmented control that overlaps the block-size slider.
+struct RedactionModeMenu: View {
+    @Binding var mode: RedactionMode
+    var emphasizesOnDark: Bool = false
+
+    @State private var isPresented = false
+
+    private var systemImage: String {
+        switch mode {
+        case .pixelate: "square.grid.3x3.fill"
+        case .blur: "drop.fill"
+        case .solid: "rectangle.fill"
+        }
+    }
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(emphasizesOnDark ? Color.white : Color.primary)
+                Text(mode.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(emphasizesOnDark ? Color.white : Color.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(emphasizesOnDark ? Color.white.opacity(0.7) : Color.secondary)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(Color.accentColor.opacity(emphasizesOnDark ? 0.48 : 0.22))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(
+                        Color.accentColor.opacity(emphasizesOnDark ? 0.9 : 0.85),
+                        lineWidth: 1.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(2)
+        .background(emphasizesOnDark ? Color.white.opacity(0.09) : Color.primary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .fixedSize(horizontal: true, vertical: false)
+        .help("Redaction Mode")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(RedactionMode.allCases, id: \.self) { option in
+                    Button {
+                        mode = option
+                        isPresented = false
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: icon(for: option))
+                                .font(.system(size: 12, weight: .medium))
+                                .frame(width: 16)
+                            Text(option.label)
+                                .font(.system(size: 13, weight: .medium))
+                            Spacer(minLength: 12)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                                .opacity(mode == option ? 1 : 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 160)
+        }
+    }
+
+    private func icon(for option: RedactionMode) -> String {
+        switch option {
+        case .pixelate: "square.grid.3x3.fill"
+        case .blur: "drop.fill"
+        case .solid: "rectangle.fill"
+        }
+    }
+}
+
 /// One-way / two-way arrow tip preview drawn as a line with tip(s).
 struct ArrowHeadGlyph: View {
     let style: ArrowHeadStyle

@@ -50,6 +50,14 @@ public final class ScrollCaptureController: @unchecked Sendable {
     /// A/B frame model
     private var shotA: CGImage?
 
+    /// Sticky chrome detected on first real scroll delta.
+    private var headerHeight = 0
+    private var scrollbarWidth = 0
+    private var chromeDetected = false
+    /// Once the user starts scrolling, lock that direction as "forward".
+    /// `true` means Vision `ty < 0` is downward scroll (typical).
+    private var forwardScrollIsNegativeTY: Bool?
+
     /// Cached ScreenCaptureKit objects (created once, reused)
     private var cachedFilter: SCContentFilter?
     private var cachedStreamConfig: SCStreamConfiguration?
@@ -92,7 +100,6 @@ public final class ScrollCaptureController: @unchecked Sendable {
     private func runCaptureLoop(
         onProgress: @escaping @Sendable (ScrollCaptureProgress) -> Void
     ) async -> CGImage? {
-        // Capture initial frame
         guard let firstFrame = await captureFrame() else {
             return nil
         }
@@ -106,36 +113,73 @@ public final class ScrollCaptureController: @unchecked Sendable {
             frameCount: frameCount
         ))
 
-        // Main capture loop — runs until user clicks Done / Cancel
-        // or max height is reached. No auto-stop on pause/jitter.
         while !isCancelled {
             if stitcher.totalHeight >= config.maxHeight { break }
 
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: .milliseconds(120))
             guard !isCancelled else { break }
 
             guard let shotB = await captureFrame() else { continue }
 
             // Skip if identical (user not scrolling)
-            if let dataA = shotA?.dataProvider?.data,
-               let dataB = shotB.dataProvider?.data,
-               CFDataGetLength(dataA) == CFDataGetLength(dataB),
-               let ptrA = CFDataGetBytePtr(dataA),
-               let ptrB = CFDataGetBytePtr(dataB),
-               memcmp(ptrA, ptrB, CFDataGetLength(dataA)) == 0 {
+            if framesAppearIdentical(shotA, shotB) {
                 continue
             }
 
-            guard let imageA = shotA,
-                  let rawOffset = detectOffset(imageA: imageA, imageB: shotB) else {
+            guard let imageA = shotA else {
                 shotA = shotB
                 continue
             }
 
-            let absOffset = abs(rawOffset)
-            if absOffset < 3 { continue }
+            if !chromeDetected {
+                scrollbarWidth = ScrollbarDetector.detectScrollbarWidth(
+                    frame1: imageA, frame2: shotB
+                )
+                headerHeight = HeaderDetector.detectHeaderHeight(
+                    frame1: imageA, frame2: shotB
+                )
+                stitcher.applyChrome(headerHeight: headerHeight, scrollbarWidth: scrollbarWidth)
+                chromeDetected = true
+            }
 
-            let result = stitcher.stitch(newFrame: shotB, detectedOffset: absOffset)
+            let visionA = ScrollStitcher.cropForRegistration(
+                imageA,
+                headerHeight: headerHeight,
+                scrollbarWidth: scrollbarWidth
+            )
+            let visionB = ScrollStitcher.cropForRegistration(
+                shotB,
+                headerHeight: headerHeight,
+                scrollbarWidth: scrollbarWidth
+            )
+
+            guard let rawOffset = detectOffset(imageA: visionA, imageB: visionB) else {
+                shotA = shotB
+                continue
+            }
+
+            if abs(rawOffset) < 3 {
+                continue
+            }
+
+            // Lock the first meaningful scroll direction as "forward" so Vision
+            // polarity differences across macOS versions don't break stitching.
+            if forwardScrollIsNegativeTY == nil {
+                forwardScrollIsNegativeTY = rawOffset < 0
+            }
+            let newRows: Int
+            if forwardScrollIsNegativeTY == true {
+                newRows = -rawOffset
+            } else {
+                newRows = rawOffset
+            }
+            // Opposite direction (scroll back up) — ignore, don't reverse-stitch.
+            guard newRows >= 3 else {
+                shotA = shotB
+                continue
+            }
+
+            let result = stitcher.stitch(newFrame: shotB, detectedOffset: newRows)
 
             if case .stitched = result {
                 frameCount += 1
@@ -155,6 +199,19 @@ public final class ScrollCaptureController: @unchecked Sendable {
         return stitcher.mergedImage
     }
 
+    private func framesAppearIdentical(_ a: CGImage?, _ b: CGImage?) -> Bool {
+        guard let a, let b,
+              a.width == b.width, a.height == b.height,
+              let dataA = a.dataProvider?.data,
+              let dataB = b.dataProvider?.data,
+              CFDataGetLength(dataA) == CFDataGetLength(dataB),
+              let ptrA = CFDataGetBytePtr(dataA),
+              let ptrB = CFDataGetBytePtr(dataB) else {
+            return false
+        }
+        return memcmp(ptrA, ptrB, CFDataGetLength(dataA)) == 0
+    }
+
     // MARK: - Frame Capture
 
     private func captureFrame() async -> CGImage? {
@@ -169,7 +226,6 @@ public final class ScrollCaptureController: @unchecked Sendable {
                     return nil
                 }
 
-                // Exclude all Capso windows (our overlay panels)
                 let myBundleID = Bundle.main.bundleIdentifier ?? ""
                 let myWindows = content.windows.filter {
                     $0.owningApplication?.bundleIdentifier == myBundleID
@@ -204,7 +260,7 @@ public final class ScrollCaptureController: @unchecked Sendable {
     // MARK: - Vision Offset Detection
 
     /// Detect Y offset between two frames using VNTranslationalImageRegistrationRequest.
-    /// Each call creates a fresh VNImageRequestHandler (stateless, reliable).
+    /// Returns Vision's raw `ty` (upper-left origin). Negative ≈ scrolled down.
     private func detectOffset(imageA: CGImage, imageB: CGImage) -> Int? {
         let request = VNTranslationalImageRegistrationRequest(targetedCGImage: imageA)
         let handler = VNImageRequestHandler(cgImage: imageB, options: [:])
@@ -220,7 +276,6 @@ public final class ScrollCaptureController: @unchecked Sendable {
             return nil
         }
 
-        let ty = observation.alignmentTransform.ty
-        return Int(round(ty))
+        return Int(round(observation.alignmentTransform.ty))
     }
 }

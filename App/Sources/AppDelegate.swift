@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         historyCoordinator!.shareCoordinator = shareCoordinator
         historyCoordinator!.captureCoordinator = captureCoordinator
         recordingCoordinator!.historyCoordinator = historyCoordinator
+        recordingCoordinator!.captureCoordinator = captureCoordinator
         preferencesWindow = PreferencesWindow(settings: settings, permissionManager: permissionManager, updateManager: updateManager)
         DiagnosticLogger.append(
             "App launched version=\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown") build=\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown") diagnostics=\(settings.diagnosticLoggingEnabled)",

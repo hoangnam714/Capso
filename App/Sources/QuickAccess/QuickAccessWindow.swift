@@ -135,6 +135,20 @@ final class QuickAccessWindow: NSPanel {
         autoDismissTimer = nil
     }
 
+    /// Temporarily hide this preview during a new capture/recording session
+    /// so it isn't frozen into the selection backdrop or recorded video.
+    /// Auto-dismiss is paused while hidden and resumes on restore.
+    func setTemporarilyHidden(_ hidden: Bool) {
+        if hidden {
+            cancelAutoDismiss()
+            orderOut(nil)
+        } else {
+            guard !isVisible else { return }
+            orderFrontRegardless()
+            scheduleAutoDismissIfNeeded()
+        }
+    }
+
     private func handlePointerHover(_ hovering: Bool) {
         isPointerInside = hovering
         if hovering {
