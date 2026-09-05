@@ -36,7 +36,7 @@ final class QuickAccessWindow: NSPanel {
         self.targetScreen = screen ?? NSScreen.main ?? NSScreen.screens.first!
 
         let windowWidth: CGFloat = 288
-        let windowHeight: CGFloat = 248
+        let windowHeight: CGFloat = 210
 
         let screenFrame = targetScreen.visibleFrame
         let x: CGFloat = switch settings.quickAccessPosition {

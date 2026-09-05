@@ -83,13 +83,20 @@ private struct QuickAccessPreviewView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
 
-            HStack(spacing: 10) {
+            HStack(spacing: 4) {
                 previewActionButton(
                     title: String(localized: "Copy"),
                     systemImage: "doc.on.doc",
                     action: onCopy
                 )
                 .keyboardShortcut("c", modifiers: .command)
+
+                previewActionButton(
+                    title: String(localized: "Save"),
+                    systemImage: "square.and.arrow.down",
+                    action: onSave
+                )
+                .keyboardShortcut("s", modifiers: .command)
 
                 previewActionButton(
                     title: String(localized: "Delete"),
@@ -99,34 +106,12 @@ private struct QuickAccessPreviewView: View {
                 )
                 .keyboardShortcut(.delete, modifiers: [])
 
-                Menu {
-                    Button {
-                        onShare()
-                    } label: {
-                        Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
-                    }
-                    .keyboardShortcut("i", modifiers: [.command, .shift])
-
-                    Button {
-                        onSave()
-                    } label: {
-                        Label {
-                            Text(String(localized: "Save"))
-                        } icon: {
-                            SaveIcon()
-                        }
-                    }
-                    .keyboardShortcut("s", modifiers: .command)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 32, height: 28)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .help(String(localized: "More"))
-
-                Spacer()
+                previewActionButton(
+                    title: String(localized: "Share"),
+                    systemImage: "square.and.arrow.up",
+                    action: onShare
+                )
+                .keyboardShortcut("i", modifiers: [.command, .shift])
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)

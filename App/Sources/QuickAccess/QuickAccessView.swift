@@ -30,18 +30,10 @@ struct QuickAccessView: View {
 
     @State private var isHovering = false
     @State private var hoveredAction: HoverAction?
-    @State private var visualState: PanelUploadState = .idle
     @FocusState private var isFocused: Bool
 
-    private enum PanelUploadState: Equatable {
-        case idle
-        case uploading
-        case succeeded
-        case failed(ShareError)
-    }
-
     private enum HoverAction: Hashable {
-        case copy, save, share, delete, annotate, ocr, translate, pin, upload, linkCopied
+        case copy, save, share, delete, pin
     }
 
     private var isRevealed: Bool { isHovering || isFocused }
@@ -60,7 +52,7 @@ struct QuickAccessView: View {
                 captionRow
                 toolbar
             }
-            .frame(minHeight: 72)
+            .frame(minHeight: 50)
         }
         .padding(8)
         .background(hiddenEscapeButton)
@@ -83,16 +75,6 @@ struct QuickAccessView: View {
         }
         .focusable()
         .focused($isFocused)
-        .overlay(alignment: .bottom) {
-            if case .failed(let err) = visualState {
-                FailureToast(error: err) {
-                    Task { await performUpload() }  // retry
-                } onDismiss: {
-                    visualState = .idle
-                }
-                .padding(.bottom, 8)
-            }
-        }
     }
 
     private var panelStroke: Color {
@@ -102,7 +84,7 @@ struct QuickAccessView: View {
     // MARK: - Thumbnail
 
     private var thumbnailFrame: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .topLeading) {
             Image(nsImage: thumbnail)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
@@ -120,6 +102,22 @@ struct QuickAccessView: View {
                 .accessibilityLabel(Text("Screenshot preview"))
                 .accessibilityHint(Text("Click to annotate, double-click to enlarge"))
 
+            if isRevealed {
+                Button(action: onPin) {
+                    Image(systemName: "pin")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.primary.opacity(0.78))
+                        .frame(width: 24, height: 24)
+                        .background(.regularMaterial, in: Circle())
+                        .overlay(Circle().stroke(Color.primary.opacity(0.10), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .padding(7)
+                .help(String(localized: "Pin"))
+                .keyboardShortcut("p", modifiers: .command)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
             if isRevealed {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -179,99 +177,23 @@ struct QuickAccessView: View {
         case .save:      return "⌘S"
         case .share:     return "⌘⇧I"
         case .delete:    return "⌫"
-        case .annotate:  return "⌘E"
-        case .ocr:       return "⌘⇧O"
-        case .translate: return "⌘⇧T"
         case .pin:       return "⌘P"
-        case .upload, .linkCopied: return nil
         }
     }
 
-    /// All primary actions visible below the thumbnail (no overflow menu).
+    /// All primary actions on a single row; Pin lives on the thumbnail corner.
     private var toolbar: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-                toolButton(.annotate, icon: "pencil.tip.crop.circle", isPrimary: true, action: onAnnotate)
-                toolButton(.save, icon: "square.and.arrow.down", action: onSave)
-                toolButton(.share, icon: "square.and.arrow.up", action: onShare)
-            }
-            HStack(spacing: 4) {
-                toolButton(.pin, icon: "pin", action: onPin)
-                toolButton(.ocr, icon: "text.viewfinder", action: onOCR)
-                toolButton(.translate, icon: "character.bubble", action: onTranslate)
-                toolButton(.delete, icon: "trash", action: onDelete)
-                if shareCoordinator != nil {
-                    uploadButton
-                }
-            }
+        HStack(spacing: 4) {
+            toolButton(.copy, icon: "doc.on.doc", action: onCopy)
+            toolButton(.save, icon: "square.and.arrow.down", action: onSave)
+            toolButton(.delete, icon: "trash", action: onDelete)
+            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Quick Access actions"))
         .padding(.horizontal, 4)
         .padding(.vertical, 3)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    @ViewBuilder
-    private var uploadButton: some View {
-        switch visualState {
-        case .idle, .failed:
-            toolButton(.upload, icon: "icloud.and.arrow.up", action: {
-                Task { await performUpload() }
-            })
-        case .uploading:
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 29, height: 28)
-                .symbolEffect(.rotate, options: .repeating)
-                .help(String(localized: "Uploading…"))
-        case .succeeded:
-            toolButton(.linkCopied, icon: "checkmark.circle.fill", action: {})
-                .disabled(true)
-        }
-    }
-
-    private func performUpload() async {
-        guard let coord = shareCoordinator else { return }
-        let image = captureImage  // capture into local for the detached closure
-
-        // Encode + write off main actor — large PNGs block UI for hundreds of ms otherwise
-        let tempURL: URL? = await Task.detached(priority: .userInitiated) { () -> URL? in
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString)
-                .appendingPathExtension("png")
-            guard let data = ImageUtilities.pngData(from: image) else { return nil }
-            do {
-                try data.write(to: url)
-                return url
-            } catch {
-                return nil
-            }
-        }.value
-
-        guard let tempURL else {
-            // Encode/write failed — show as failure
-            visualState = .failed(.unknown("Failed to encode capture for upload"))
-            return
-        }
-        defer { try? FileManager.default.removeItem(at: tempURL) }
-
-        visualState = .uploading
-        do {
-            let cloudURL = try await coord.upload(file: tempURL, contentType: "image/png")
-            onUploadSucceeded?(cloudURL.absoluteString)
-            visualState = .succeeded
-            try? await Task.sleep(for: .seconds(3))
-            if case .succeeded = visualState {
-                visualState = .idle
-            }
-        } catch let err as ShareError {
-            visualState = .failed(err)
-        } catch {
-            visualState = .failed(.unknown(error.localizedDescription))
-        }
     }
 
     @ViewBuilder
@@ -311,7 +233,6 @@ struct QuickAccessView: View {
 
     private func toolForeground(_ kind: HoverAction, isPrimary: Bool) -> Color {
         if isPrimary { return .white }
-        if kind == .linkCopied { return .green }
         if kind == .delete { return Color.red.opacity(hoveredAction == kind ? 0.96 : 0.78) }
         return Color.primary.opacity(hoveredAction == kind ? 0.96 : 0.78)
     }
@@ -329,11 +250,7 @@ struct QuickAccessView: View {
         case .save:      return ("s", [.command])
         case .share:     return ("i", [.command, .shift])
         case .delete:    return (.delete, [])
-        case .annotate:  return ("e", [.command])
-        case .ocr:       return ("o", [.command, .shift])
-        case .translate: return ("t", [.command, .shift])
         case .pin:       return ("p", [.command])
-        case .upload, .linkCopied: return nil
         }
     }
 
@@ -351,12 +268,7 @@ struct QuickAccessView: View {
         case .save: return String(localized: "Save")
         case .share: return String(localized: "Share")
         case .delete: return String(localized: "Delete")
-        case .annotate: return String(localized: "Annotate")
-        case .ocr: return String(localized: "Extract Text")
-        case .translate: return String(localized: "Translate")
         case .pin: return String(localized: "Pin")
-        case .upload: return String(localized: "Upload to Cloud")
-        case .linkCopied: return String(localized: "Link Copied!")
         }
     }
 
@@ -366,59 +278,7 @@ struct QuickAccessView: View {
         case .save: return String(localized: "Save screenshot")
         case .share: return String(localized: "Share to other apps")
         case .delete: return String(localized: "Discard capture and restore previous clipboard")
-        case .annotate: return String(localized: "Open annotation editor")
-        case .ocr: return String(localized: "Extract text from screenshot")
-        case .translate: return String(localized: "Translate text in screenshot")
         case .pin: return String(localized: "Pin to screen")
-        case .upload: return String(localized: "Upload screenshot to cloud and copy link")
-        case .linkCopied: return String(localized: "Link has been copied to clipboard")
-        }
-    }
-}
-
-// MARK: - Failure toast
-
-private struct FailureToast: View {
-    let error: ShareError
-    let onRetry: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
-            Text(message)
-                .font(.system(size: 12))
-            Button(String(localized: "Retry"), action: onRetry)
-                .controlSize(.small)
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.regularMaterial, in: Capsule())
-    }
-
-    private var message: String {
-        switch error {
-        case .invalidCredentials:
-            return String(localized: "Cloud credentials are invalid. Open Settings to fix.")
-        case .network(let underlying):
-            return String(localized: "Upload failed — network error: \(underlying)")
-        case .quotaExceeded:
-            return String(localized: "Cloud quota exceeded.")
-        case .publicAccessUnreachable:
-            return String(localized: "Upload OK but public URL unreachable. Check bucket settings.")
-        case .invalidURLPrefix(let reason):
-            return String(localized: "Cloud URL prefix is invalid: \(reason)")
-        case .notConfigured:
-            return String(localized: "Cloud sharing is not configured.")
-        case .unknown(let detail):
-            return String(localized: "Upload failed: \(detail)")
         }
     }
 }

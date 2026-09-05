@@ -347,7 +347,7 @@ struct AnnotationEditorView: View {
             onRedo: { document.redo(); refreshTrigger += 1 },
             onSave: { save() },
             onCopy: { copy() },
-            onCancel: onCancel,
+            onCancel: requestClose,
             onCrop: { isCropMode = true },
             onShare: { share() },
             onPin: { pin() },
@@ -965,6 +965,20 @@ struct AnnotationEditorView: View {
             if let rendered = renderedOutputImage() {
                 onSave(rendered, sourceImage, document)
             }
+        }
+    }
+
+    private func requestClose() {
+        if isCropMode {
+            isCropMode = false
+            return
+        }
+        if AnnotationEditorCloseConfirmation.presentIfNeeded(
+            document: document,
+            save: { save() },
+            discard: { onCancel() }
+        ) {
+            return
         }
     }
 

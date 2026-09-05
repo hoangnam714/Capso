@@ -391,7 +391,7 @@ private struct InlineAnnotationEditorView: View {
             canRedo: document.canRedo,
             onUndo: undo,
             onRedo: redo,
-            onCancel: onCancel,
+            onCancel: requestClose,
             onCopy: copy,
             onShare: share,
             onPin: pin,
@@ -652,6 +652,16 @@ private struct InlineAnnotationEditorView: View {
             if let rendered = renderedOutputImage() {
                 onSave(rendered)
             }
+        }
+    }
+
+    private func requestClose() {
+        if AnnotationEditorCloseConfirmation.presentIfNeeded(
+            document: document,
+            save: { save() },
+            discard: { onCancel() }
+        ) {
+            return
         }
     }
 

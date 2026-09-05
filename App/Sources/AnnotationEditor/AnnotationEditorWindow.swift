@@ -4,10 +4,13 @@ import SwiftUI
 import AnnotationKit
 
 @MainActor
-final class AnnotationEditorWindow: NSPanel {
+final class AnnotationEditorWindow: NSPanel, NSWindowDelegate {
+    private let sourceImage: CGImage
     private let document: AnnotationDocument
     private let interactionState = AnnotationEditorInteractionState()
     private let targetFrame: NSRect
+    private let onDiscard: () -> Void
+    private let onSaveHandler: (CGImage, CGImage, AnnotationDocument) -> Void
 
     /// Multiplies the current zoom (pinch / ⌘-scroll). Set by AnnotationEditorView.
     var onZoomByFactor: ((CGFloat) -> Void)?
@@ -42,6 +45,9 @@ final class AnnotationEditorWindow: NSPanel {
             document.loadSidecar(sidecar)
         }
         self.document = document
+        self.sourceImage = image
+        self.onDiscard = onClose
+        self.onSaveHandler = onSave
 
         // Prefer the screen where the capture originated (the one the user was
         // focused on). Falling back to NSScreen.main unconditionally would
@@ -133,6 +139,32 @@ final class AnnotationEditorWindow: NSPanel {
         // Hosting-view layout can nudge the frame after contentView is set —
         // re-apply centering once more so the panel stays on the target screen.
         self.setFrame(targetFrame, display: false)
+        self.delegate = self
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard document.canUndo else {
+            onDiscard()
+            return true
+        }
+        if AnnotationEditorCloseConfirmation.presentIfNeeded(
+            document: document,
+            save: { [weak self] in self?.saveAndClose() },
+            discard: { [weak self] in
+                self?.onDiscard()
+                self?.close()
+            }
+        ) {
+            return false
+        }
+        return false
+    }
+
+    private func saveAndClose() {
+        if let rendered = AnnotationRenderer.render(sourceImage: sourceImage, objects: document.objects) {
+            onSaveHandler(rendered, sourceImage, document)
+        }
+        close()
     }
 
     func show() {

@@ -45,6 +45,7 @@ final class RecordingCoordinator {
     private var borderWindow: RecordingBorderWindow?
     private var cameraPiPWindow: CameraPiPWindow?
     private var recordingPreviewWindow: RecordingPreviewWindow?
+    private var recordingVideoPreviewWindow: RecordingVideoPreviewWindow?
     private var editorWindow: RecordingEditorWindow?
     private var editorCoordinator: EditorCoordinator?
     private var clickMonitor: ClickMonitor?
@@ -828,8 +829,50 @@ final class RecordingCoordinator {
             self?.recordingPreviewWindow = nil
         }
 
+        window.onPreview = { [weak self, weak window] in
+            guard !state.isSaving else { return }
+            self?.openRecordingVideoPreview(
+                tempURL: tempURL,
+                format: format,
+                anchorScreen: window?.screen,
+                state: state,
+                sourcePreview: window
+            )
+        }
+
         window.show()
         recordingPreviewWindow = window
+    }
+
+    private func openRecordingVideoPreview(
+        tempURL: URL,
+        format: RecordingKit.RecordingFormat,
+        anchorScreen: NSScreen?,
+        state: RecordingPreviewState,
+        sourcePreview: RecordingPreviewWindow?
+    ) {
+        recordingVideoPreviewWindow?.close()
+        let preview = RecordingVideoPreviewWindow(videoURL: tempURL, anchorScreen: anchorScreen)
+        preview.onCopy = { [weak self, weak sourcePreview] in
+            sourcePreview?.onCopy?()
+        }
+        preview.onSave = { [weak sourcePreview] in
+            sourcePreview?.onSave?()
+        }
+        preview.onShare = { [weak preview] in
+            SystemSharePresenter.present(fileURL: tempURL, from: preview)
+        }
+        preview.onDelete = { [weak self, weak preview, weak sourcePreview] in
+            sourcePreview?.onDelete?()
+            preview?.close()
+            self?.recordingVideoPreviewWindow = nil
+        }
+        preview.onClose = { [weak self, weak preview] in
+            guard self?.recordingVideoPreviewWindow === preview else { return }
+            self?.recordingVideoPreviewWindow = nil
+        }
+        recordingVideoPreviewWindow = preview
+        preview.show()
     }
 
     private func exportRecordingToClipboard(

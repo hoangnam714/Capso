@@ -1,10 +1,6 @@
 import SwiftUI
 import Observation
 
-/// Reactive state for the recording preview window. The coordinator
-/// flips `isSaving = true` when Save is clicked and feeds `saveProgress`
-/// from the export pipeline. The view observes both via `@Observable`
-/// tracking and re-renders the right column accordingly.
 @MainActor
 @Observable
 final class RecordingPreviewState {
@@ -22,10 +18,12 @@ struct RecordingPreviewView: View {
     let onSave: () -> Void
     let onShare: () -> Void
     let onDelete: () -> Void
+    let onPreview: () -> Void
     let onClose: () -> Void
 
     @State private var isHovering = false
     @State private var hoveredAction: HoverAction?
+    @FocusState private var isFocused: Bool
 
     private enum HoverAction: Hashable {
         case copy, save, share, delete
@@ -34,7 +32,7 @@ struct RecordingPreviewView: View {
     private static let panelCornerRadius: CGFloat = 14
     private static let thumbnailSize = CGSize(width: 268, height: 116)
 
-    private var isRevealed: Bool { isHovering }
+    private var isRevealed: Bool { isHovering || isFocused }
 
     var body: some View {
         VStack(spacing: 9) {
@@ -64,10 +62,12 @@ struct RecordingPreviewView: View {
         .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
         .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
         .onHover { isHovering = $0 }
+        .focusable()
+        .focused($isFocused)
     }
 
     private var thumbnailFrame: some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack {
             Group {
                 if let thumb = thumbnail {
                     Image(nsImage: thumb)
@@ -90,6 +90,9 @@ struct RecordingPreviewView: View {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .onTapGesture(count: 2, perform: onPreview)
+            .help(String(localized: "Double-click to preview"))
 
             HStack(spacing: 6) {
                 HStack(spacing: 3) {
@@ -106,8 +109,10 @@ struct RecordingPreviewView: View {
             .padding(.vertical, 3)
             .background(.black.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .padding(7)
-
+        }
+        .overlay(alignment: .topTrailing) {
             if isRevealed {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -118,7 +123,6 @@ struct RecordingPreviewView: View {
                         .overlay(Circle().stroke(Color.primary.opacity(0.10), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(7)
                 .help(String(localized: "Close"))
             }
@@ -147,9 +151,9 @@ struct RecordingPreviewView: View {
     private var actionToolbar: some View {
         HStack(spacing: 4) {
             toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-            toolButton(.save, icon: "square.and.arrow.down", isPrimary: true, action: onSave)
-            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            toolButton(.save, icon: "square.and.arrow.down", action: onSave)
             toolButton(.delete, icon: "trash", action: onDelete)
+            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 3)
@@ -183,18 +187,17 @@ struct RecordingPreviewView: View {
     private func toolButton(
         _ kind: HoverAction,
         icon: String,
-        isPrimary: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(toolForeground(kind, isPrimary: isPrimary))
+                .foregroundStyle(toolForeground(kind))
                 .frame(maxWidth: .infinity)
                 .frame(height: 28)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(toolBackground(kind, isPrimary: isPrimary))
+                        .fill(hoveredAction == kind ? Color.primary.opacity(0.12) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -202,17 +205,9 @@ struct RecordingPreviewView: View {
         .help(Text(label(kind)))
     }
 
-    private func toolForeground(_ kind: HoverAction, isPrimary: Bool) -> Color {
-        if isPrimary { return .white }
+    private func toolForeground(_ kind: HoverAction) -> Color {
         if kind == .delete { return Color.red.opacity(hoveredAction == kind ? 0.96 : 0.78) }
         return Color.primary.opacity(hoveredAction == kind ? 0.96 : 0.78)
-    }
-
-    private func toolBackground(_ kind: HoverAction, isPrimary: Bool) -> Color {
-        if isPrimary {
-            return Color.accentColor.opacity(hoveredAction == kind ? 0.92 : 0.78)
-        }
-        return hoveredAction == kind ? Color.primary.opacity(0.12) : Color.clear
     }
 
     private func label(_ kind: HoverAction) -> String {

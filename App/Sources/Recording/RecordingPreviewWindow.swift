@@ -8,6 +8,7 @@ final class RecordingPreviewWindow: NSPanel {
     var onSave: (() -> Void)?
     var onShare: (() -> Void)?
     var onDelete: (() -> Void)?
+    var onPreview: (() -> Void)?
     var onClose: (() -> Void)?
 
     /// Reactive state for the in-place "Saving…" progress indicator. The
@@ -29,7 +30,7 @@ final class RecordingPreviewWindow: NSPanel {
         self.settings = settings
 
         let windowWidth: CGFloat = 288
-        let windowHeight: CGFloat = 248
+        let windowHeight: CGFloat = 210
 
         let screen = NSScreen.main ?? NSScreen.screens.first!
         let screenFrame = screen.visibleFrame
@@ -64,6 +65,7 @@ final class RecordingPreviewWindow: NSPanel {
             onSave: { [weak self] in self?.onSave?() },
             onShare: { [weak self] in self?.onShare?() },
             onDelete: { [weak self] in self?.onDelete?() },
+            onPreview: { [weak self] in self?.onPreview?() },
             onClose: { [weak self] in self?.onClose?() }
         )
 
