@@ -17,6 +17,11 @@ import ExportKit
 import EffectsKit
 import EditorKit
 
+extension Notification.Name {
+    /// Posted when screen recording starts or stops. `userInfo["active"]` is Bool.
+    static let recordingActiveStateChanged = Notification.Name("recordingActiveStateChanged")
+}
+
 /// Orchestrates recording flow:
 /// 1. Show overlay for area selection (drag, or Space to switch to window selection)
 /// 2. Show recording toolbar (format, camera, mic, audio)
@@ -69,6 +74,19 @@ final class RecordingCoordinator {
     }
 
     // MARK: - Public API
+
+    var isRecordingActive: Bool { recorder.state.isActive }
+
+    func pauseOrResumeRecording() {
+        switch recorder.state {
+        case .recording:
+            recorder.pause()
+        case .paused:
+            recorder.resume()
+        default:
+            break
+        }
+    }
 
     /// Start the recording flow: show overlay for area selection.
     func startRecordingFlow() {
@@ -492,23 +510,22 @@ final class RecordingCoordinator {
             guard let self else { return }
             Task { @MainActor in
                 do {
-                    // Show the red border before starting the stream so its
-                    // window ID can be passed to SCContentFilter — otherwise
-                    // it gets composited into the first captured frames.
+                    // Show UI chrome before starting the stream so window IDs
+                    // can be excluded from ScreenCaptureKit.
                     self.showBorder()
                     self.borderWindow?.displayIfNeeded()
-                    let excludeIDs: [CGWindowID]
-                    if let n = self.borderWindow?.windowNumber, n > 0 {
-                        excludeIDs = [CGWindowID(n)]
-                    } else {
-                        excludeIDs = []
-                    }
+                    self.showRecordingControls()
+                    self.controlsWindow?.displayIfNeeded()
+                    let excludeIDs = self.recordingUIExcludeWindowIDs()
                     try await self.recorder.startRecording(config: config, excludeWindowIDs: excludeIDs)
                     self.startClickHighlight()
                     self.startCursorTelemetry()
-                    self.showRecordingControls()
+                    self.controlsWindow?.orderFrontRegardless()
+                    self.notifyRecordingActiveStateChanged()
                 } catch {
                     print("Recording failed to start: \(error)")
+                    self.controlsWindow?.close()
+                    self.controlsWindow = nil
                     self.borderWindow?.hide()
                     self.borderWindow = nil
                     if cameraEnabled {
@@ -793,9 +810,20 @@ final class RecordingCoordinator {
         }
 
         window.onClose = { [weak self] in
-            // Closing mid-export would orphan the temp file with no UI to
-            // recover from. Block until the save finishes.
             guard !state.isSaving else { return }
+            self?.recordingPreviewWindow?.close()
+            self?.recordingPreviewWindow = nil
+        }
+
+        window.onShare = { [weak self, weak window] in
+            guard !state.isSaving else { return }
+            window?.cancelAutoDismissForSave()
+            SystemSharePresenter.present(fileURL: tempURL, from: window)
+        }
+
+        window.onDelete = { [weak self] in
+            guard !state.isSaving else { return }
+            try? FileManager.default.removeItem(at: tempURL)
             self?.recordingPreviewWindow?.close()
             self?.recordingPreviewWindow = nil
         }
@@ -896,6 +924,17 @@ final class RecordingCoordinator {
         } catch {
             return nil
         }
+    }
+
+    private func recordingUIExcludeWindowIDs() -> [CGWindowID] {
+        var ids: [CGWindowID] = []
+        for window in [borderWindow, controlsWindow, cameraPiPWindow] {
+            let number = window?.windowNumber ?? 0
+            if number > 0 {
+                ids.append(CGWindowID(number))
+            }
+        }
+        return ids
     }
 
     private func showRecordingControls() {
@@ -999,6 +1038,15 @@ final class RecordingCoordinator {
         cameraPiPWindow = nil
         cameraManager.stop()
         captureCoordinator?.restoreQuickAccessPreviews()
+        notifyRecordingActiveStateChanged()
+    }
+
+    private func notifyRecordingActiveStateChanged() {
+        NotificationCenter.default.post(
+            name: .recordingActiveStateChanged,
+            object: nil,
+            userInfo: ["active": recorder.state.isActive]
+        )
     }
 
     private func saveRecordingToHistory(url: URL, format: RecordingKit.RecordingFormat) {

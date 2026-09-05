@@ -6,6 +6,8 @@ import SharedKit
 final class RecordingPreviewWindow: NSPanel {
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
+    var onShare: (() -> Void)?
+    var onDelete: (() -> Void)?
     var onClose: (() -> Void)?
 
     /// Reactive state for the in-place "Saving…" progress indicator. The
@@ -26,8 +28,8 @@ final class RecordingPreviewWindow: NSPanel {
         self.state = state
         self.settings = settings
 
-        let windowWidth: CGFloat = 340
-        let windowHeight: CGFloat = 140
+        let windowWidth: CGFloat = 288
+        let windowHeight: CGFloat = 248
 
         let screen = NSScreen.main ?? NSScreen.screens.first!
         let screenFrame = screen.visibleFrame
@@ -60,6 +62,8 @@ final class RecordingPreviewWindow: NSPanel {
             state: state,
             onCopy: { [weak self] in self?.onCopy?() },
             onSave: { [weak self] in self?.onSave?() },
+            onShare: { [weak self] in self?.onShare?() },
+            onDelete: { [weak self] in self?.onDelete?() },
             onClose: { [weak self] in self?.onClose?() }
         )
 

@@ -72,6 +72,20 @@ final class MenuBarController: NSObject {
         let menu = NSMenu()
         menu.delegate = self
 
+        if recordingCoordinator.isRecordingActive {
+            let stopItem = menuItem(String(localized: "Stop Recording"), action: #selector(stopRecording))
+            stopItem.keyEquivalent = "."
+            stopItem.keyEquivalentModifierMask = [.command, .shift]
+            menu.addItem(stopItem)
+
+            let pauseTitle = recordingCoordinator.recorder.state == .paused
+                ? String(localized: "Resume Recording")
+                : String(localized: "Pause Recording")
+            menu.addItem(menuItem(pauseTitle, action: #selector(togglePauseRecording)))
+
+            menu.addItem(.separator())
+        }
+
         let captureAllInOne = menuItem(String(localized: "All-in-One"), action: #selector(captureAllInOne))
         captureAllInOne.setShortcut(for: .captureAllInOne)
         menu.addItem(captureAllInOne)
@@ -113,6 +127,7 @@ final class MenuBarController: NSObject {
 
         let recordScreen = menuItem(String(localized: "Record Screen"), action: #selector(recordScreen))
         recordScreen.setShortcut(for: .recordScreen)
+        recordScreen.isEnabled = !recordingCoordinator.isRecordingActive
         menu.addItem(recordScreen)
 
         menu.addItem(.separator())
@@ -259,6 +274,14 @@ final class MenuBarController: NSObject {
         recordingCoordinator.startRecordingFlow()
     }
 
+    @objc private func stopRecording() {
+        recordingCoordinator.stopRecording()
+    }
+
+    @objc private func togglePauseRecording() {
+        recordingCoordinator.pauseOrResumeRecording()
+    }
+
     @objc private func openHistory() {
         historyCoordinator.showWindow()
     }
@@ -285,8 +308,13 @@ final class MenuBarController: NSObject {
 
 extension MenuBarController: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
+        // Rebuild so recording controls (Stop / Pause) appear while active.
+        let refreshedMenu = buildMenu()
+        refreshedMenu.delegate = self
+        statusItem?.menu = refreshedMenu
+
         // Refresh shortcut display from KeyboardShortcuts in case user changed them
-        for item in menu.items {
+        for item in refreshedMenu.items {
             switch item.action {
             case #selector(captureAllInOne): item.setShortcut(for: .captureAllInOne)
             case #selector(captureArea): item.setShortcut(for: .captureArea)

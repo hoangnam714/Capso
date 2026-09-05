@@ -60,7 +60,7 @@ struct QuickAccessView: View {
                 captionRow
                 toolbar
             }
-            .frame(minHeight: 50)
+            .frame(minHeight: 72)
         }
         .padding(8)
         .background(hiddenEscapeButton)
@@ -187,14 +187,24 @@ struct QuickAccessView: View {
         }
     }
 
-    /// Primary actions always visible; secondary actions live in More.
+    /// All primary actions visible below the thumbnail (no overflow menu).
     private var toolbar: some View {
-        HStack(spacing: 4) {
-            toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-            toolButton(.annotate, icon: "pencil.tip.crop.circle", isPrimary: true, action: onAnnotate)
-            toolButton(.delete, icon: "trash", action: onDelete)
-            Spacer(minLength: 4)
-            moreActionsMenu
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                toolButton(.copy, icon: "doc.on.doc", action: onCopy)
+                toolButton(.annotate, icon: "pencil.tip.crop.circle", isPrimary: true, action: onAnnotate)
+                toolButton(.save, icon: "square.and.arrow.down", action: onSave)
+                toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            }
+            HStack(spacing: 4) {
+                toolButton(.pin, icon: "pin", action: onPin)
+                toolButton(.ocr, icon: "text.viewfinder", action: onOCR)
+                toolButton(.translate, icon: "character.bubble", action: onTranslate)
+                toolButton(.delete, icon: "trash", action: onDelete)
+                if shareCoordinator != nil {
+                    uploadButton
+                }
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Quick Access actions"))
@@ -203,75 +213,24 @@ struct QuickAccessView: View {
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
-    private var moreActionsMenu: some View {
-        Menu {
-            Button {
-                onSave()
-            } label: {
-                Label(String(localized: "Save"), systemImage: "square.and.arrow.down")
-            }
-            .keyboardShortcut("s", modifiers: .command)
-
-            Button {
-                onShare()
-            } label: {
-                Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
-            }
-            .keyboardShortcut("i", modifiers: [.command, .shift])
-
-            Button {
-                onPin()
-            } label: {
-                Label(String(localized: "Pin"), systemImage: "pin")
-            }
-            .keyboardShortcut("p", modifiers: .command)
-
-            Divider()
-
-            Button {
-                onOCR()
-            } label: {
-                Label(String(localized: "OCR"), systemImage: "text.viewfinder")
-            }
-            .keyboardShortcut("o", modifiers: [.command, .shift])
-
-            Button {
-                onTranslate()
-            } label: {
-                Label(
-                    targetLanguageDisplay.map { String(localized: "Translate → \($0)") }
-                        ?? String(localized: "Translate"),
-                    systemImage: "character.bubble"
-                )
-            }
-            .keyboardShortcut("t", modifiers: [.command, .shift])
-
-            if shareCoordinator != nil {
-                Divider()
-                switch visualState {
-                case .idle, .failed:
-                    Button {
-                        Task { await performUpload() }
-                    } label: {
-                        Label(String(localized: "Upload to Cloud"), systemImage: "icloud.and.arrow.up")
-                    }
-                case .uploading:
-                    Text(String(localized: "Uploading…"))
-                case .succeeded:
-                    Label(String(localized: "Link Copied"), systemImage: "checkmark.circle.fill")
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.78))
+    @ViewBuilder
+    private var uploadButton: some View {
+        switch visualState {
+        case .idle, .failed:
+            toolButton(.upload, icon: "icloud.and.arrow.up", action: {
+                Task { await performUpload() }
+            })
+        case .uploading:
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
                 .frame(width: 29, height: 28)
-                .contentShape(Rectangle())
+                .symbolEffect(.rotate, options: .repeating)
+                .help(String(localized: "Uploading…"))
+        case .succeeded:
+            toolButton(.linkCopied, icon: "checkmark.circle.fill", action: {})
+                .disabled(true)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .help(String(localized: "More"))
-        .onHover { hoveredAction = $0 ? nil : hoveredAction }
     }
 
     private func performUpload() async {

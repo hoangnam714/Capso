@@ -141,7 +141,6 @@ private struct InlineAnnotationEditorView: View {
     let onCancel: () -> Void
 
     @AppStorage("annotationLastTool") private var currentTool: AnnotationTool = .arrow
-    @AppStorage("annotationLastColor") private var drawingColor: AnnotationColor = .red
     @AppStorage("annotationFilled") private var filled: Bool = false
     @AppStorage("annotationShapeWidth") private var savedLineWidth: Double = 3
     @AppStorage("annotationBlockSize") private var savedBlockSize: Double = 12
@@ -194,12 +193,31 @@ private struct InlineAnnotationEditorView: View {
             opacity = 1.0
         }
         return AnnotationKit.StrokeStyle(
-            color: drawingColor,
+            color: toolbarColor,
             lineWidth: lineWidth,
             opacity: opacity,
             filled: filled || currentTool == .highlightFocus,
             pattern: strokePattern
         )
+    }
+
+    private var activeColorTool: AnnotationTool {
+        if currentTool == .select, let selected = document.selectedObject {
+            switch selected {
+            case is TextObject: return .text
+            case is CounterObject: return .counter
+            case is FreehandObject:
+                return selected.style.opacity < 0.5 ? .highlighter : .freehand
+            case is ArrowObject: return .arrow
+            case is LineObject: return .line
+            case is RectangleObject: return .rectangle
+            case is EllipseObject: return .ellipse
+            case is ShapeObject: return .shape
+            case is HighlightFocusObject: return .highlightFocus
+            default: return currentTool
+            }
+        }
+        return currentTool
     }
 
     private var selectedObjectStyle: AnnotationKit.StrokeStyle {
@@ -407,12 +425,8 @@ private struct InlineAnnotationEditorView: View {
         lineWidth = savedWidth(for: currentTool)
         highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
         strokePattern = savedStrokePattern
-        toolbarColor = drawingColor
+        toolbarColor = AnnotationToolColorStore.color(for: currentTool)
         if currentTool == .highlightFocus {
-            if toolbarColor != .black && document.highlightFocusObject == nil {
-                toolbarColor = .black
-                drawingColor = .black
-            }
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
                 style: AnnotationKit.StrokeStyle(
@@ -437,7 +451,8 @@ private struct InlineAnnotationEditorView: View {
 
     private func handleToolChange(oldTool: AnnotationTool, newTool: AnnotationTool) {
         document.clearSelection()
-        toolbarColor = drawingColor
+        AnnotationToolColorStore.setColor(toolbarColor, for: oldTool)
+        toolbarColor = AnnotationToolColorStore.color(for: newTool)
         persistWidth(lineWidth, for: oldTool)
         lineWidth = savedWidth(for: newTool)
         if oldTool == .highlightFocus, newTool != .highlightFocus {
@@ -445,10 +460,6 @@ private struct InlineAnnotationEditorView: View {
             refreshTrigger += 1
         }
         if newTool == .highlightFocus {
-            if toolbarColor != .black && document.highlightFocusObject == nil {
-                toolbarColor = .black
-                drawingColor = .black
-            }
             highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
@@ -479,16 +490,15 @@ private struct InlineAnnotationEditorView: View {
     }
 
     private func handleToolbarColorChange(oldValue: AnnotationColor, newValue: AnnotationColor) {
+        AnnotationToolColorStore.setColor(newValue, for: activeColorTool)
         if document.selectedObject != nil {
             updateSelectedStyle()
-        } else {
-            drawingColor = newValue
         }
     }
 
     private func handleSelectionChange(oldValue: ObjectID?, newValue: ObjectID?) {
         guard let selected = document.selectedObject else {
-            toolbarColor = drawingColor
+            toolbarColor = AnnotationToolColorStore.color(for: activeColorTool)
             return
         }
         toolbarColor = selected.style.color

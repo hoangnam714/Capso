@@ -5,43 +5,73 @@ import RecordingKit
 
 @MainActor
 final class RecordingControlsWindow: NSPanel {
+    override var canBecomeKey: Bool { true }
+
     init(recordingFrame: CGRect, screen: NSScreen, recorder: ScreenRecorder, onStop: @escaping () -> Void, onRestart: @escaping () -> Void, onDelete: @escaping () -> Void) {
-        let width: CGFloat = 250
-        let height: CGFloat = 52
-
-        let screenFrame = screen.visibleFrame
-        var x = recordingFrame.midX - width / 2
-        var y = recordingFrame.minY - height - 18
-
-        // If there isn't enough room below, place above the selection instead.
-        if y < screenFrame.minY + 8 {
-            y = recordingFrame.maxY + 18
-        }
-
-        // Clamp horizontally and vertically to the visible screen.
-        x = max(screenFrame.minX + 8, min(x, screenFrame.maxX - width - 8))
-        y = max(screenFrame.minY + 8, min(y, screenFrame.maxY - height - 8))
+        let panelSize = NSSize(width: 250, height: 52)
+        let frame = Self.preferredFrame(
+            recordingFrame: recordingFrame,
+            panelSize: panelSize,
+            screen: screen
+        )
 
         super.init(
-            contentRect: NSRect(x: x, y: y, width: width, height: height),
+            contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
 
-        self.level = .floating
+        self.level = .screenSaver + 2
         self.isOpaque = false
         self.backgroundColor = .clear
         self.hasShadow = false
-        self.collectionBehavior = [.canJoinAllSpaces, .transient]
+        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         self.isMovableByWindowBackground = true
+        self.acceptsMouseMovedEvents = true
+        self.hidesOnDeactivate = false
         self.sharingType = .none
 
         let view = RecordingControlsView(recorder: recorder, onStop: onStop, onRestart: onRestart, onDelete: onDelete)
         self.contentView = NSHostingView(rootView: view)
     }
 
-    func show() { makeKeyAndOrderFront(nil) }
+    /// Place controls where they stay clickable — fullscreen selections often
+    /// cover the menu bar / dock, so anchoring below the capture rect fails.
+    static func preferredFrame(recordingFrame: CGRect, panelSize: NSSize, screen: NSScreen) -> NSRect {
+        let visible = screen.visibleFrame
+        let width = panelSize.width
+        let height = panelSize.height
+
+        let intersection = recordingFrame.intersection(visible)
+        let visibleArea = max(visible.width * visible.height, 1)
+        let coverage = (intersection.width * intersection.height) / visibleArea
+        let isFullScreenLike = coverage > 0.90
+
+        var x: CGFloat
+        var y: CGFloat
+
+        if isFullScreenLike {
+            x = visible.midX - width / 2
+            y = visible.minY + 16
+        } else {
+            x = recordingFrame.midX - width / 2
+            y = recordingFrame.minY - height - 18
+            if y < visible.minY + 8 {
+                y = recordingFrame.maxY + 18
+            }
+        }
+
+        x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
+        y = max(visible.minY + 8, min(y, visible.maxY - height - 8))
+
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    func show() {
+        orderFrontRegardless()
+        makeKey()
+    }
 }
 
 private struct RecordingControlsView: View {

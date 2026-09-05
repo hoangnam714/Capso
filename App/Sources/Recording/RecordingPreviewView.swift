@@ -20,82 +20,140 @@ struct RecordingPreviewView: View {
     let state: RecordingPreviewState
     let onCopy: () -> Void
     let onSave: () -> Void
+    let onShare: () -> Void
+    let onDelete: () -> Void
     let onClose: () -> Void
 
+    @State private var isHovering = false
+    @State private var hoveredAction: HoverAction?
+
+    private enum HoverAction: Hashable {
+        case copy, save, share, delete
+    }
+
+    private static let panelCornerRadius: CGFloat = 14
+    private static let thumbnailSize = CGSize(width: 268, height: 116)
+
+    private var isRevealed: Bool { isHovering }
+
     var body: some View {
-        HStack(spacing: 0) {
-            ZStack(alignment: .bottomLeading) {
+        VStack(spacing: 9) {
+            thumbnailFrame
+
+            VStack(spacing: 6) {
+                captionRow
+                if state.isSaving {
+                    savingOverlay
+                } else {
+                    actionToolbar
+                }
+            }
+            .frame(minHeight: 50)
+        }
+        .padding(8)
+        .background(hiddenEscapeButton)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Self.panelCornerRadius, style: .continuous)
+                .stroke(Color.primary.opacity(isRevealed ? 0.14 : 0.08), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
+        .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+        .onHover { isHovering = $0 }
+    }
+
+    private var thumbnailFrame: some View {
+        ZStack(alignment: .bottomLeading) {
+            Group {
                 if let thumb = thumbnail {
                     Image(nsImage: thumb)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 200, maxHeight: 120)
                 } else {
                     Rectangle()
                         .fill(Color.black.opacity(0.3))
-                        .frame(width: 160, height: 100)
                         .overlay(
                             Image(systemName: "video.fill")
                                 .font(.system(size: 24))
                                 .foregroundStyle(.white.opacity(0.5))
                         )
                 }
-
-                HStack(spacing: 6) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "record.circle.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.red)
-                        Text(duration)
-                    }
-                    Text(fileSize)
-                }
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(.black.opacity(0.6))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .padding(6)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .padding(8)
+            .frame(width: Self.thumbnailSize.width, height: Self.thumbnailSize.height)
+            .background(Color.black.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+            )
 
-            // Right column: either action buttons (idle) or a progress
-            // indicator (saving). We never display both at once so the user
-            // can't accidentally double-click Save mid-export and end up
-            // with two output files.
-            Group {
-                if state.isSaving {
-                    savingOverlay
-                } else {
-                    VStack(spacing: 6) {
-                        quickActionButton("Copy", systemImage: "doc.on.doc", action: onCopy)
-                        saveQuickActionButton(action: onSave)
-                    }
+            HStack(spacing: 6) {
+                HStack(spacing: 3) {
+                    Image(systemName: "record.circle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.red)
+                    Text(duration)
                 }
+                Text(fileSize)
             }
-            .frame(width: 90)
-            .padding(.trailing, 8)
-            .padding(.vertical, 8)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .padding(7)
 
-            // Close button hidden during save — closing mid-export would
-            // orphan the temp file with no UI to retry from.
-            if !state.isSaving {
+            if isRevealed {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary.opacity(0.78))
+                        .frame(width: 24, height: 24)
+                        .background(.regularMaterial, in: Circle())
+                        .overlay(Circle().stroke(Color.primary.opacity(0.10), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 6)
-                .padding(.top, 6)
-                .frame(maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(7)
+                .help(String(localized: "Close"))
             }
         }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+    }
+
+    private var captionRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Label {
+                Text(hoveredAction.map(label) ?? String(localized: "Recording ready"))
+                    .font(.system(size: 13, weight: .semibold))
+            } icon: {
+                Image(systemName: hoveredAction == nil ? "checkmark.circle.fill" : "hand.tap")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(hoveredAction == nil ? .green : .secondary)
+            }
+            Spacer()
+            Text("\(duration) · \(fileSize)")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private var actionToolbar: some View {
+        HStack(spacing: 4) {
+            toolButton(.copy, icon: "doc.on.doc", action: onCopy)
+            toolButton(.save, icon: "square.and.arrow.down", isPrimary: true, action: onSave)
+            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            toolButton(.delete, icon: "trash", action: onDelete)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     @ViewBuilder
@@ -110,30 +168,59 @@ struct RecordingPreviewView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
     }
 
-    private func saveQuickActionButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label {
-                Text("Save")
-            } icon: {
-                SaveIcon()
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .font(.system(size: 12))
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+    private var hiddenEscapeButton: some View {
+        Button(action: onClose) { EmptyView() }
+            .keyboardShortcut(.escape, modifiers: [])
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
     }
 
-    private func quickActionButton(_ title: LocalizedStringKey, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func toolButton(
+        _ kind: HoverAction,
+        icon: String,
+        isPrimary: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12))
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(toolForeground(kind, isPrimary: isPrimary))
                 .frame(maxWidth: .infinity)
+                .frame(height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(toolBackground(kind, isPrimary: isPrimary))
+                )
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.plain)
+        .onHover { hoveredAction = $0 ? kind : nil }
+        .help(Text(label(kind)))
+    }
+
+    private func toolForeground(_ kind: HoverAction, isPrimary: Bool) -> Color {
+        if isPrimary { return .white }
+        if kind == .delete { return Color.red.opacity(hoveredAction == kind ? 0.96 : 0.78) }
+        return Color.primary.opacity(hoveredAction == kind ? 0.96 : 0.78)
+    }
+
+    private func toolBackground(_ kind: HoverAction, isPrimary: Bool) -> Color {
+        if isPrimary {
+            return Color.accentColor.opacity(hoveredAction == kind ? 0.92 : 0.78)
+        }
+        return hoveredAction == kind ? Color.primary.opacity(0.12) : Color.clear
+    }
+
+    private func label(_ kind: HoverAction) -> String {
+        switch kind {
+        case .copy: return String(localized: "Copy")
+        case .save: return String(localized: "Save")
+        case .share: return String(localized: "Share")
+        case .delete: return String(localized: "Delete")
+        }
     }
 }

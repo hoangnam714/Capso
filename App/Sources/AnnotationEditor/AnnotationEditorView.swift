@@ -48,7 +48,6 @@ struct AnnotationEditorView: View {
     // meaning changes with the active tool; it is synced on every change into
     // the correct per-tool store below.
     @AppStorage("annotationLastTool") private var currentTool: AnnotationTool = .arrow
-    @AppStorage("annotationLastColor") private var drawingColor: AnnotationColor = .red
     @AppStorage("annotationFilled") private var filled: Bool = false
     @AppStorage("annotationShapeWidth") private var savedLineWidth: Double = 3
     @AppStorage("annotationBlockSize") private var savedBlockSize: Double = 12
@@ -75,7 +74,7 @@ struct AnnotationEditorView: View {
     @State private var lineWidth: CGFloat = 3
     @State private var highlightFocusOpacity: CGFloat = HighlightFocusObject.defaultDimOpacity
     /// Color shown in the swatches. Tracks the selected object when one is
-    /// selected; otherwise mirrors `drawingColor` for new strokes.
+    /// selected; otherwise the persisted color for the active tool.
     @State private var toolbarColor: AnnotationColor = .red
     @State private var strokePattern: StrokePattern = .solid
     /// True while an inline text editor is active. Lets the toolbar show
@@ -158,7 +157,7 @@ struct AnnotationEditorView: View {
             opacity = 1.0
         }
         return AnnotationKit.StrokeStyle(
-            color: drawingColor,
+            color: toolbarColor,
             lineWidth: lineWidth,
             opacity: opacity,
             filled: filled || currentTool == .highlightFocus,
@@ -213,6 +212,10 @@ struct AnnotationEditorView: View {
         case is HighlightFocusObject: return .highlightFocus
         default: return nil
         }
+    }
+
+    private var activeColorTool: AnnotationTool {
+        AnnotationToolColorStore.activeColorTool(currentTool: currentTool, sizeControlTool: sizeControlTool)
     }
 
     private var sizeToolForPersistence: AnnotationTool {
@@ -580,12 +583,8 @@ struct AnnotationEditorView: View {
         lineWidth = savedWidth(for: currentTool)
         highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
         strokePattern = savedStrokePattern
-        toolbarColor = drawingColor
+        toolbarColor = AnnotationToolColorStore.color(for: currentTool)
         if currentTool == .highlightFocus {
-            if toolbarColor != .black && document.highlightFocusObject == nil {
-                toolbarColor = .black
-                drawingColor = .black
-            }
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
                 style: AnnotationKit.StrokeStyle(
@@ -608,7 +607,8 @@ struct AnnotationEditorView: View {
 
     private func handleToolChange(oldTool: AnnotationTool, newTool: AnnotationTool) {
         document.clearSelection()
-        toolbarColor = drawingColor
+        AnnotationToolColorStore.setColor(toolbarColor, for: oldTool)
+        toolbarColor = AnnotationToolColorStore.color(for: newTool)
         persistWidth(lineWidth, for: oldTool)
         lineWidth = savedWidth(for: newTool)
         if oldTool == .highlightFocus, newTool != .highlightFocus {
@@ -616,11 +616,6 @@ struct AnnotationEditorView: View {
             refreshTrigger += 1
         }
         if newTool == .highlightFocus {
-            // Default spotlight color is black; user can change via the picker.
-            if toolbarColor != .black && document.highlightFocusObject == nil {
-                toolbarColor = .black
-                drawingColor = .black
-            }
             highlightFocusOpacity = CGFloat(savedHighlightFocusOpacity)
             document.ensureHighlightFocusOverlay(
                 cornerRadius: lineWidth,
@@ -647,20 +642,18 @@ struct AnnotationEditorView: View {
 
     private func handleSelectionChange(oldValue: ObjectID?, newValue: ObjectID?) {
         guard let selected = document.selectedObject else {
-            // Deselected — restore the color used for new drawings.
-            toolbarColor = drawingColor
+            toolbarColor = AnnotationToolColorStore.color(for: activeColorTool)
             return
         }
         syncToolbar(from: selected)
     }
 
     /// Color swatches edit the selected object only; with no selection they
-    /// update the default color for newly drawn strokes.
+    /// update the persisted color for the active tool.
     private func handleToolbarColorChange(oldValue: AnnotationColor, newValue: AnnotationColor) {
+        AnnotationToolColorStore.setColor(newValue, for: activeColorTool)
         if document.selectedObject != nil {
             updateSelectedStyle()
-        } else {
-            drawingColor = newValue
         }
     }
 

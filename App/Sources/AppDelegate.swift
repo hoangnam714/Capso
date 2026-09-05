@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static private(set) var shared: AppDelegate?
 
     private var menuBarController: MenuBarController?
+    private var recordingStatusBarIndicator: RecordingStatusBarIndicator?
     let settings = AppSettings()
     let permissionManager = PermissionManager()
     private(set) var captureCoordinator: CaptureCoordinator?
@@ -68,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             historyCoordinator: historyCoordinator!,
             onShowPreferences: { [weak self] in self?.showPreferences() }
         )
+        recordingStatusBarIndicator = RecordingStatusBarIndicator { [weak self] in
+            self?.recordingCoordinator?.stopRecording()
+        }
+        recordingStatusBarIndicator?.bind(recorder: recordingCoordinator!.recorder)
         registerGlobalShortcuts()
         historyCoordinator?.runCleanup()
 
