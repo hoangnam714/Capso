@@ -19,6 +19,10 @@ struct QuickAccessView: View {
     let onSave: () -> Void
     let onShare: () -> Void
     let onDelete: () -> Void
+    let onCopyPath: () -> Void
+    let onDuplicate: () -> Void
+    let onShowInFinder: () -> Void
+    let onUpload: (() -> Void)?
     let onAnnotate: () -> Void
     let onOCR: () -> Void
     let onTranslate: () -> Void
@@ -29,14 +33,17 @@ struct QuickAccessView: View {
     var onHoveringChanged: ((Bool) -> Void)? = nil
 
     @State private var isHovering = false
-    @State private var hoveredAction: HoverAction?
+    @State private var isOptionHeld = false
+    @State private var hoveredAction: ToolbarAction?
     @FocusState private var isFocused: Bool
 
-    private enum HoverAction: Hashable {
+    private enum ToolbarAction: Hashable {
         case copy, save, share, delete, pin
+        case copyPath, duplicate, showInFinder, ocr, translate, upload
     }
 
     private var isRevealed: Bool { isHovering || isFocused }
+    private var showsAdvancedToolbar: Bool { isRevealed && isOptionHeld }
     private static let panelCornerRadius: CGFloat = 14
     private static let thumbnailSize = CGSize(width: 268, height: 116)
 
@@ -71,7 +78,13 @@ struct QuickAccessView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.26), value: isRevealed)
         .onHover { hovering in
             isHovering = hovering
+            if hovering {
+                isOptionHeld = NSEvent.modifierFlags.contains(.option)
+            }
             onHoveringChanged?(hovering)
+        }
+        .onModifierKeysChanged(mask: .option) { _, new in
+            isOptionHeld = new.contains(.option)
         }
         .focusable()
         .focused($isFocused)
@@ -140,12 +153,12 @@ struct QuickAccessView: View {
     private var captionRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Label {
-                Text(hoveredAction.map(label) ?? String(localized: "Captured"))
+                Text(captionTitle)
                     .font(.system(size: 13, weight: .semibold))
             } icon: {
-                Image(systemName: hoveredAction == nil ? "checkmark.circle.fill" : "hand.tap")
+                Image(systemName: captionIcon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(hoveredAction == nil ? .green : .secondary)
+                    .foregroundStyle(captionIconColor)
             }
             Spacer()
             if let key = hoveredShortcutKey {
@@ -160,8 +173,29 @@ struct QuickAccessView: View {
         .padding(.horizontal, 6)
     }
 
+    private var captionTitle: String {
+        if let action = hoveredAction { return label(action) }
+        if showsAdvancedToolbar { return String(localized: "Advanced") }
+        return String(localized: "Captured")
+    }
+
+    private var captionIcon: String {
+        if hoveredAction != nil { return "hand.tap" }
+        if showsAdvancedToolbar { return "ellipsis.circle.fill" }
+        return "checkmark.circle.fill"
+    }
+
+    private var captionIconColor: Color {
+        if hoveredAction != nil { return .secondary }
+        if showsAdvancedToolbar { return .secondary }
+        return .green
+    }
+
     private var metaLine: String {
-        "\(dimensions) · \(relativeTime)"
+        if isRevealed && !showsAdvancedToolbar {
+            return "\(dimensions) · \(relativeTime) · ⌥"
+        }
+        return "\(dimensions) · \(relativeTime)"
     }
 
     private var relativeTime: String {
@@ -178,27 +212,53 @@ struct QuickAccessView: View {
         case .share:     return "⌘⇧I"
         case .delete:    return "⌫"
         case .pin:       return "⌘P"
+        case .copyPath, .duplicate, .showInFinder, .ocr, .translate, .upload:
+            return nil
         }
     }
 
-    /// All primary actions on a single row; Pin lives on the thumbnail corner.
+    /// Primary actions by default; hold ⌥ while focused/hovering for advanced actions.
     private var toolbar: some View {
         HStack(spacing: 4) {
+            if showsAdvancedToolbar {
+                advancedToolbar
+            } else {
+                primaryToolbar
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(showsAdvancedToolbar ? "Advanced actions" : "Quick Access actions"))
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showsAdvancedToolbar)
+    }
+
+    private var primaryToolbar: some View {
+        Group {
             toolButton(.copy, icon: "doc.on.doc", action: onCopy)
             toolButton(.save, icon: "square.and.arrow.down", action: onSave)
             toolButton(.delete, icon: "trash", action: onDelete)
             toolButton(.share, icon: "square.and.arrow.up", action: onShare)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Quick Access actions"))
-        .padding(.horizontal, 4)
-        .padding(.vertical, 3)
-        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var advancedToolbar: some View {
+        Group {
+            toolButton(.copyPath, icon: "link", action: onCopyPath)
+            toolButton(.duplicate, icon: "plus.square.on.square", action: onDuplicate)
+            toolButton(.showInFinder, icon: "folder", action: onShowInFinder)
+            toolButton(.ocr, icon: "text.viewfinder", action: onOCR)
+            toolButton(.translate, icon: "character.bubble", action: onTranslate)
+            if onUpload != nil {
+                toolButton(.upload, icon: "icloud.and.arrow.up", action: { onUpload?() })
+            }
+        }
     }
 
     @ViewBuilder
     private func toolButton(
-        _ kind: HoverAction,
+        _ kind: ToolbarAction,
         icon: String,
         isPrimary: Bool = false,
         action: @escaping () -> Void
@@ -231,26 +291,28 @@ struct QuickAccessView: View {
         }
     }
 
-    private func toolForeground(_ kind: HoverAction, isPrimary: Bool) -> Color {
+    private func toolForeground(_ kind: ToolbarAction, isPrimary: Bool) -> Color {
         if isPrimary { return .white }
         if kind == .delete { return Color.red.opacity(hoveredAction == kind ? 0.96 : 0.78) }
         return Color.primary.opacity(hoveredAction == kind ? 0.96 : 0.78)
     }
 
-    private func toolBackground(_ kind: HoverAction, isPrimary: Bool) -> Color {
+    private func toolBackground(_ kind: ToolbarAction, isPrimary: Bool) -> Color {
         if isPrimary {
             return Color.accentColor.opacity(hoveredAction == kind ? 0.92 : 0.78)
         }
         return hoveredAction == kind ? Color.primary.opacity(0.12) : Color.clear
     }
 
-    private func shortcut(for kind: HoverAction) -> (key: KeyEquivalent, modifiers: EventModifiers)? {
+    private func shortcut(for kind: ToolbarAction) -> (key: KeyEquivalent, modifiers: EventModifiers)? {
         switch kind {
         case .copy:      return ("c", [.command])
         case .save:      return ("s", [.command])
         case .share:     return ("i", [.command, .shift])
         case .delete:    return (.delete, [])
         case .pin:       return ("p", [.command])
+        case .copyPath, .duplicate, .showInFinder, .ocr, .translate, .upload:
+            return nil
         }
     }
 
@@ -262,23 +324,35 @@ struct QuickAccessView: View {
             .allowsHitTesting(false)
     }
 
-    private func label(_ kind: HoverAction) -> String {
+    private func label(_ kind: ToolbarAction) -> String {
         switch kind {
         case .copy: return String(localized: "Copy")
         case .save: return String(localized: "Save")
         case .share: return String(localized: "Share")
         case .delete: return String(localized: "Delete")
         case .pin: return String(localized: "Pin")
+        case .copyPath: return String(localized: "Copy Path")
+        case .duplicate: return String(localized: "Duplicate")
+        case .showInFinder: return String(localized: "Show in Finder")
+        case .ocr: return String(localized: "OCR")
+        case .translate: return String(localized: "Translate")
+        case .upload: return String(localized: "Upload to Cloud")
         }
     }
 
-    private func hintForAccessibility(_ kind: HoverAction) -> String {
+    private func hintForAccessibility(_ kind: ToolbarAction) -> String {
         switch kind {
         case .copy: return String(localized: "Copy to clipboard")
         case .save: return String(localized: "Save screenshot")
         case .share: return String(localized: "Share to other apps")
         case .delete: return String(localized: "Discard capture and restore previous clipboard")
         case .pin: return String(localized: "Pin to screen")
+        case .copyPath: return String(localized: "Copy file path to clipboard")
+        case .duplicate: return String(localized: "Save another copy")
+        case .showInFinder: return String(localized: "Reveal saved file in Finder")
+        case .ocr: return String(localized: "Extract text from screenshot")
+        case .translate: return String(localized: "Translate screenshot text")
+        case .upload: return String(localized: "Upload to cloud storage")
         }
     }
 }

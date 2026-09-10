@@ -829,6 +829,43 @@ final class RecordingCoordinator {
             self?.recordingPreviewWindow = nil
         }
 
+        window.onCopyPath = {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects([tempURL as NSURL])
+        }
+
+        window.onShowInFinder = {
+            NSWorkspace.shared.activateFileViewerSelecting([tempURL])
+        }
+
+        window.onDuplicate = { [weak self, weak window] in
+            guard let self else { return }
+            guard !state.isSaving else { return }
+            state.isSaving = true
+            state.saveProgress = 0
+            state.progressLabel = String(localized: "Duplicating…")
+            window?.cancelAutoDismissForSave()
+
+            Task { @MainActor in
+                let result = await self.exportRecording(
+                    tempURL,
+                    format: format,
+                    deleteSourceOnSuccess: false
+                ) { progress in
+                    Task { @MainActor in
+                        state.saveProgress = progress
+                    }
+                }
+
+                state.isSaving = false
+                state.saveProgress = 0
+                state.progressLabel = String(localized: "Saving…")
+                if result == nil {
+                    self.showRecordingSaveFailureAlert(format: format)
+                }
+            }
+        }
+
         window.onPreview = { [weak self, weak window] in
             guard !state.isSaving else { return }
             self?.openRecordingVideoPreview(
@@ -866,6 +903,15 @@ final class RecordingCoordinator {
             sourcePreview?.onDelete?()
             preview?.close()
             self?.recordingVideoPreviewWindow = nil
+        }
+        preview.onCopyPath = { [weak sourcePreview] in
+            sourcePreview?.onCopyPath?()
+        }
+        preview.onDuplicate = { [weak sourcePreview] in
+            sourcePreview?.onDuplicate?()
+        }
+        preview.onShowInFinder = { [weak sourcePreview] in
+            sourcePreview?.onShowInFinder?()
         }
         preview.onClose = { [weak self, weak preview] in
             guard self?.recordingVideoPreviewWindow === preview else { return }

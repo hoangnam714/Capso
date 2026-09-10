@@ -9,6 +9,12 @@ final class QuickAccessPreviewWindow: NSPanel {
     var onSave: (() -> Void)?
     var onShare: (() -> Void)?
     var onDelete: (() -> Void)?
+    var onCopyPath: (() -> Void)?
+    var onDuplicate: (() -> Void)?
+    var onShowInFinder: (() -> Void)?
+    var onOCR: (() -> Void)?
+    var onTranslate: (() -> Void)?
+    var onUpload: (() -> Void)?
 
     private let image: CGImage
 
@@ -52,7 +58,13 @@ final class QuickAccessPreviewWindow: NSPanel {
             onCopy: { [weak self] in self?.onCopy?() },
             onSave: { [weak self] in self?.onSave?() },
             onShare: { [weak self] in self?.onShare?() },
-            onDelete: { [weak self] in self?.onDelete?() }
+            onDelete: { [weak self] in self?.onDelete?() },
+            onCopyPath: { [weak self] in self?.onCopyPath?() },
+            onDuplicate: { [weak self] in self?.onDuplicate?() },
+            onShowInFinder: { [weak self] in self?.onShowInFinder?() },
+            onOCR: { [weak self] in self?.onOCR?() },
+            onTranslate: { [weak self] in self?.onTranslate?() },
+            onUpload: { [weak self] in self?.onUpload?() }
         )
         self.contentView = NSHostingView(rootView: view)
     }
@@ -74,6 +86,16 @@ private struct QuickAccessPreviewView: View {
     let onSave: () -> Void
     let onShare: () -> Void
     let onDelete: () -> Void
+    let onCopyPath: () -> Void
+    let onDuplicate: () -> Void
+    let onShowInFinder: () -> Void
+    let onOCR: () -> Void
+    let onTranslate: () -> Void
+    let onUpload: (() -> Void)?
+
+    @State private var isOptionHeld = false
+
+    private var showsAdvancedToolbar: Bool { isOptionHeld }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,40 +104,84 @@ private struct QuickAccessPreviewView: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
+                .onHover { hovering in
+                    if hovering {
+                        isOptionHeld = NSEvent.modifierFlags.contains(.option)
+                    }
+                }
 
             HStack(spacing: 4) {
-                previewActionButton(
-                    title: String(localized: "Copy"),
-                    systemImage: "doc.on.doc",
-                    action: onCopy
-                )
-                .keyboardShortcut("c", modifiers: .command)
+                if showsAdvancedToolbar {
+                    previewActionButton(
+                        title: String(localized: "Copy Path"),
+                        systemImage: "link",
+                        action: onCopyPath
+                    )
+                    previewActionButton(
+                        title: String(localized: "Duplicate"),
+                        systemImage: "plus.square.on.square",
+                        action: onDuplicate
+                    )
+                    previewActionButton(
+                        title: String(localized: "Show in Finder"),
+                        systemImage: "folder",
+                        action: onShowInFinder
+                    )
+                    previewActionButton(
+                        title: String(localized: "OCR"),
+                        systemImage: "text.viewfinder",
+                        action: onOCR
+                    )
+                    previewActionButton(
+                        title: String(localized: "Translate"),
+                        systemImage: "character.bubble",
+                        action: onTranslate
+                    )
+                    if let onUpload {
+                        previewActionButton(
+                            title: String(localized: "Upload to Cloud"),
+                            systemImage: "icloud.and.arrow.up",
+                            action: onUpload
+                        )
+                    }
+                } else {
+                    previewActionButton(
+                        title: String(localized: "Copy"),
+                        systemImage: "doc.on.doc",
+                        action: onCopy
+                    )
+                    .keyboardShortcut("c", modifiers: .command)
 
-                previewActionButton(
-                    title: String(localized: "Save"),
-                    systemImage: "square.and.arrow.down",
-                    action: onSave
-                )
-                .keyboardShortcut("s", modifiers: .command)
+                    previewActionButton(
+                        title: String(localized: "Save"),
+                        systemImage: "square.and.arrow.down",
+                        action: onSave
+                    )
+                    .keyboardShortcut("s", modifiers: .command)
 
-                previewActionButton(
-                    title: String(localized: "Delete"),
-                    systemImage: "trash",
-                    isDestructive: true,
-                    action: onDelete
-                )
-                .keyboardShortcut(.delete, modifiers: [])
+                    previewActionButton(
+                        title: String(localized: "Delete"),
+                        systemImage: "trash",
+                        isDestructive: true,
+                        action: onDelete
+                    )
+                    .keyboardShortcut(.delete, modifiers: [])
 
-                previewActionButton(
-                    title: String(localized: "Share"),
-                    systemImage: "square.and.arrow.up",
-                    action: onShare
-                )
-                .keyboardShortcut("i", modifiers: [.command, .shift])
+                    previewActionButton(
+                        title: String(localized: "Share"),
+                        systemImage: "square.and.arrow.up",
+                        action: onShare
+                    )
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(.bar)
+            .animation(.easeOut(duration: 0.18), value: showsAdvancedToolbar)
+        }
+        .onModifierKeysChanged(mask: .option) { _, new in
+            isOptionHeld = new.contains(.option)
         }
     }
 

@@ -18,21 +18,27 @@ struct RecordingPreviewView: View {
     let onSave: () -> Void
     let onShare: () -> Void
     let onDelete: () -> Void
+    let onCopyPath: () -> Void
+    let onDuplicate: () -> Void
+    let onShowInFinder: () -> Void
     let onPreview: () -> Void
     let onClose: () -> Void
 
     @State private var isHovering = false
-    @State private var hoveredAction: HoverAction?
+    @State private var isOptionHeld = false
+    @State private var hoveredAction: ToolbarAction?
     @FocusState private var isFocused: Bool
 
-    private enum HoverAction: Hashable {
+    private enum ToolbarAction: Hashable {
         case copy, save, share, delete
+        case copyPath, duplicate, showInFinder
     }
 
     private static let panelCornerRadius: CGFloat = 14
     private static let thumbnailSize = CGSize(width: 268, height: 116)
 
     private var isRevealed: Bool { isHovering || isFocused }
+    private var showsAdvancedToolbar: Bool { isRevealed && isOptionHeld }
 
     var body: some View {
         VStack(spacing: 9) {
@@ -61,7 +67,15 @@ struct RecordingPreviewView: View {
         )
         .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
         .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                isOptionHeld = NSEvent.modifierFlags.contains(.option)
+            }
+        }
+        .onModifierKeysChanged(mask: .option) { _, new in
+            isOptionHeld = new.contains(.option)
+        }
         .focusable()
         .focused($isFocused)
     }
@@ -132,15 +146,15 @@ struct RecordingPreviewView: View {
     private var captionRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Label {
-                Text(hoveredAction.map(label) ?? String(localized: "Recording ready"))
+                Text(captionTitle)
                     .font(.system(size: 13, weight: .semibold))
             } icon: {
-                Image(systemName: hoveredAction == nil ? "checkmark.circle.fill" : "hand.tap")
+                Image(systemName: captionIcon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(hoveredAction == nil ? .green : .secondary)
+                    .foregroundStyle(captionIconColor)
             }
             Spacer()
-            Text("\(duration) · \(fileSize)")
+            Text(metaLine)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -148,16 +162,48 @@ struct RecordingPreviewView: View {
         .padding(.horizontal, 6)
     }
 
+    private var captionTitle: String {
+        if let action = hoveredAction { return label(action) }
+        if showsAdvancedToolbar { return String(localized: "Advanced") }
+        return String(localized: "Recording ready")
+    }
+
+    private var captionIcon: String {
+        if hoveredAction != nil { return "hand.tap" }
+        if showsAdvancedToolbar { return "ellipsis.circle.fill" }
+        return "checkmark.circle.fill"
+    }
+
+    private var captionIconColor: Color {
+        if hoveredAction != nil { return .secondary }
+        if showsAdvancedToolbar { return .secondary }
+        return .green
+    }
+
+    private var metaLine: String {
+        if isRevealed && !showsAdvancedToolbar {
+            return "\(duration) · \(fileSize) · ⌥"
+        }
+        return "\(duration) · \(fileSize)"
+    }
+
     private var actionToolbar: some View {
         HStack(spacing: 4) {
-            toolButton(.copy, icon: "doc.on.doc", action: onCopy)
-            toolButton(.save, icon: "square.and.arrow.down", action: onSave)
-            toolButton(.delete, icon: "trash", action: onDelete)
-            toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            if showsAdvancedToolbar {
+                toolButton(.copyPath, icon: "link", action: onCopyPath)
+                toolButton(.duplicate, icon: "plus.square.on.square", action: onDuplicate)
+                toolButton(.showInFinder, icon: "folder", action: onShowInFinder)
+            } else {
+                toolButton(.copy, icon: "doc.on.doc", action: onCopy)
+                toolButton(.save, icon: "square.and.arrow.down", action: onSave)
+                toolButton(.delete, icon: "trash", action: onDelete)
+                toolButton(.share, icon: "square.and.arrow.up", action: onShare)
+            }
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 3)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .animation(.easeOut(duration: 0.18), value: showsAdvancedToolbar)
     }
 
     @ViewBuilder
@@ -185,7 +231,7 @@ struct RecordingPreviewView: View {
     }
 
     private func toolButton(
-        _ kind: HoverAction,
+        _ kind: ToolbarAction,
         icon: String,
         action: @escaping () -> Void
     ) -> some View {
@@ -205,17 +251,20 @@ struct RecordingPreviewView: View {
         .help(Text(label(kind)))
     }
 
-    private func toolForeground(_ kind: HoverAction) -> Color {
+    private func toolForeground(_ kind: ToolbarAction) -> Color {
         if kind == .delete { return Color.red.opacity(hoveredAction == kind ? 0.96 : 0.78) }
         return Color.primary.opacity(hoveredAction == kind ? 0.96 : 0.78)
     }
 
-    private func label(_ kind: HoverAction) -> String {
+    private func label(_ kind: ToolbarAction) -> String {
         switch kind {
         case .copy: return String(localized: "Copy")
         case .save: return String(localized: "Save")
         case .share: return String(localized: "Share")
         case .delete: return String(localized: "Delete")
+        case .copyPath: return String(localized: "Copy Path")
+        case .duplicate: return String(localized: "Duplicate")
+        case .showInFinder: return String(localized: "Show in Finder")
         }
     }
 }

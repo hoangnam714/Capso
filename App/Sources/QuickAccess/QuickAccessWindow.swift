@@ -15,6 +15,10 @@ final class QuickAccessWindow: NSPanel {
     var onSave: (() -> Void)?
     var onShare: (() -> Void)?
     var onDelete: (() -> Void)?
+    var onCopyPath: (() -> Void)?
+    var onDuplicate: (() -> Void)?
+    var onShowInFinder: (() -> Void)?
+    var onUpload: (() -> Void)?
     var onAnnotate: (() -> Void)?
     var onOCR: (() -> Void)?
     var onTranslate: (() -> Void)?
@@ -82,6 +86,10 @@ final class QuickAccessWindow: NSPanel {
             onSave:      { [weak self] in self?.onSave?() },
             onShare:     { [weak self] in self?.onShare?() },
             onDelete:    { [weak self] in self?.onDelete?() },
+            onCopyPath:  { [weak self] in self?.onCopyPath?() },
+            onDuplicate: { [weak self] in self?.onDuplicate?() },
+            onShowInFinder: { [weak self] in self?.onShowInFinder?() },
+            onUpload: shareCoordinator == nil ? nil : { [weak self] in self?.onUpload?() },
             onAnnotate:  { [weak self] in self?.onAnnotate?() },
             onOCR:       { [weak self] in self?.onOCR?() },
             onTranslate: { [weak self] in self?.onTranslate?() },

@@ -8,6 +8,9 @@ final class RecordingPreviewWindow: NSPanel {
     var onSave: (() -> Void)?
     var onShare: (() -> Void)?
     var onDelete: (() -> Void)?
+    var onCopyPath: (() -> Void)?
+    var onDuplicate: (() -> Void)?
+    var onShowInFinder: (() -> Void)?
     var onPreview: (() -> Void)?
     var onClose: (() -> Void)?
 
@@ -65,6 +68,9 @@ final class RecordingPreviewWindow: NSPanel {
             onSave: { [weak self] in self?.onSave?() },
             onShare: { [weak self] in self?.onShare?() },
             onDelete: { [weak self] in self?.onDelete?() },
+            onCopyPath: { [weak self] in self?.onCopyPath?() },
+            onDuplicate: { [weak self] in self?.onDuplicate?() },
+            onShowInFinder: { [weak self] in self?.onShowInFinder?() },
             onPreview: { [weak self] in self?.onPreview?() },
             onClose: { [weak self] in self?.onClose?() }
         )

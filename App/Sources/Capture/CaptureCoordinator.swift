@@ -1627,6 +1627,19 @@ final class CaptureCoordinator {
             self.quickAccessPreviewWindow?.close()
             self.dismissQuickAccessWindow(window)
         }
+        window.onCopyPath = { [weak self] in
+            self?.copyCapturePath(result: result, autoSavedURL: autoSavedURL)
+        }
+        window.onDuplicate = { [weak self] in
+            self?.duplicateCapture(result)
+        }
+        window.onShowInFinder = { [weak self] in
+            self?.showCaptureInFinder(result: result, autoSavedURL: autoSavedURL)
+        }
+        window.onUpload = { [weak self] in
+            guard let self, let coord = self.shareCoordinator else { return }
+            Task { await self.performShareAfterCapture(result: result, entryID: entryID, coord: coord) }
+        }
         window.onAnnotate = { [weak self, weak window] in
             guard let self, let window else { return }
             let anchor = window.targetScreen
@@ -1670,6 +1683,25 @@ final class CaptureCoordinator {
         quickAccessWindows.append(window)
         restackQuickAccessWindows(excluding: window)
         window.show()
+    }
+
+    private func resolvedCaptureFileURL(result: CaptureResult, autoSavedURL: URL?) -> URL? {
+        autoSavedURL ?? saveImageToFileReturningURL(result)
+    }
+
+    private func copyCapturePath(result: CaptureResult, autoSavedURL: URL?) {
+        guard let url = resolvedCaptureFileURL(result: result, autoSavedURL: autoSavedURL) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([url as NSURL])
+    }
+
+    private func showCaptureInFinder(result: CaptureResult, autoSavedURL: URL?) {
+        guard let url = resolvedCaptureFileURL(result: result, autoSavedURL: autoSavedURL) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func duplicateCapture(_ result: CaptureResult) {
+        _ = saveImageToFileReturningURL(result)
     }
 
     private func discardQuickAccessCapture(
@@ -1716,6 +1748,33 @@ final class CaptureCoordinator {
             if let sourceQuickAccess {
                 self.dismissQuickAccessWindow(sourceQuickAccess)
             }
+        }
+        previewWindow.onCopyPath = { [weak self] in
+            self?.copyCapturePath(result: result, autoSavedURL: autoSavedURL)
+        }
+        previewWindow.onDuplicate = { [weak self] in
+            self?.duplicateCapture(result)
+        }
+        previewWindow.onShowInFinder = { [weak self] in
+            self?.showCaptureInFinder(result: result, autoSavedURL: autoSavedURL)
+        }
+        previewWindow.onOCR = { [weak self, weak previewWindow, weak sourceQuickAccess] in
+            guard let self, let previewWindow else { return }
+            let anchor = previewWindow.screen
+            previewWindow.close()
+            sourceQuickAccess.map { self.dismissQuickAccessWindow($0) }
+            self.ocrCoordinator?.startVisualOCR(image: result.image, anchorScreen: anchor)
+        }
+        previewWindow.onTranslate = { [weak self, weak previewWindow, weak sourceQuickAccess] in
+            guard let self, let previewWindow else { return }
+            let anchor = previewWindow.screen
+            previewWindow.close()
+            sourceQuickAccess.map { self.dismissQuickAccessWindow($0) }
+            self.translationCoordinator?.translate(image: result.image, anchorScreen: anchor)
+        }
+        previewWindow.onUpload = shareCoordinator == nil ? nil : { [weak self] in
+            guard let self, let coord = self.shareCoordinator else { return }
+            Task { await self.performShareAfterCapture(result: result, entryID: entryID, coord: coord) }
         }
         previewWindow.onClose = { [weak self, weak previewWindow] in
             guard let self, self.quickAccessPreviewWindow === previewWindow else { return }

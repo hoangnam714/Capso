@@ -9,6 +9,9 @@ final class RecordingVideoPreviewWindow: NSPanel {
     var onSave: (() -> Void)?
     var onShare: (() -> Void)?
     var onDelete: (() -> Void)?
+    var onCopyPath: (() -> Void)?
+    var onDuplicate: (() -> Void)?
+    var onShowInFinder: (() -> Void)?
 
     private let player: AVPlayer
 
@@ -46,7 +49,10 @@ final class RecordingVideoPreviewWindow: NSPanel {
             onCopy: { [weak self] in self?.onCopy?() },
             onSave: { [weak self] in self?.onSave?() },
             onShare: { [weak self] in self?.onShare?() },
-            onDelete: { [weak self] in self?.onDelete?() }
+            onDelete: { [weak self] in self?.onDelete?() },
+            onCopyPath: { [weak self] in self?.onCopyPath?() },
+            onDuplicate: { [weak self] in self?.onDuplicate?() },
+            onShowInFinder: { [weak self] in self?.onShowInFinder?() }
         )
         contentView = NSHostingView(rootView: view)
     }
@@ -70,26 +76,48 @@ private struct RecordingVideoPreviewView: View {
     let onSave: () -> Void
     let onShare: () -> Void
     let onDelete: () -> Void
+    let onCopyPath: () -> Void
+    let onDuplicate: () -> Void
+    let onShowInFinder: () -> Void
+
+    @State private var isOptionHeld = false
+
+    private var showsAdvancedToolbar: Bool { isOptionHeld }
 
     var body: some View {
         VStack(spacing: 0) {
             VideoPlayer(player: player)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
+                .onHover { hovering in
+                    if hovering {
+                        isOptionHeld = NSEvent.modifierFlags.contains(.option)
+                    }
+                }
 
             HStack(spacing: 4) {
-                previewToolButton(icon: "doc.on.doc", title: String(localized: "Copy"), action: onCopy)
-                    .keyboardShortcut("c", modifiers: .command)
-                previewToolButton(icon: "square.and.arrow.down", title: String(localized: "Save"), isPrimary: true, action: onSave)
-                    .keyboardShortcut("s", modifiers: .command)
-                previewToolButton(icon: "square.and.arrow.up", title: String(localized: "Share"), action: onShare)
-                    .keyboardShortcut("i", modifiers: [.command, .shift])
-                previewToolButton(icon: "trash", title: String(localized: "Delete"), isDestructive: true, action: onDelete)
-                    .keyboardShortcut(.delete, modifiers: [])
+                if showsAdvancedToolbar {
+                    previewToolButton(icon: "link", title: String(localized: "Copy Path"), action: onCopyPath)
+                    previewToolButton(icon: "plus.square.on.square", title: String(localized: "Duplicate"), action: onDuplicate)
+                    previewToolButton(icon: "folder", title: String(localized: "Show in Finder"), action: onShowInFinder)
+                } else {
+                    previewToolButton(icon: "doc.on.doc", title: String(localized: "Copy"), action: onCopy)
+                        .keyboardShortcut("c", modifiers: .command)
+                    previewToolButton(icon: "square.and.arrow.down", title: String(localized: "Save"), isPrimary: true, action: onSave)
+                        .keyboardShortcut("s", modifiers: .command)
+                    previewToolButton(icon: "square.and.arrow.up", title: String(localized: "Share"), action: onShare)
+                        .keyboardShortcut("i", modifiers: [.command, .shift])
+                    previewToolButton(icon: "trash", title: String(localized: "Delete"), isDestructive: true, action: onDelete)
+                        .keyboardShortcut(.delete, modifiers: [])
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(.bar)
+            .animation(.easeOut(duration: 0.18), value: showsAdvancedToolbar)
+        }
+        .onModifierKeysChanged(mask: .option) { _, new in
+            isOptionHeld = new.contains(.option)
         }
     }
 
