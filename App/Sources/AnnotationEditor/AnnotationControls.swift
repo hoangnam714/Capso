@@ -38,7 +38,7 @@ enum AnnotationToolbarMetrics {
     /// Active swatch menu + palette + eyedropper.
     static var compactColorWidth: CGFloat { 72 }
 
-    /// Four swatches + palette + eyedropper (no hex field).
+    /// Three quick swatches + palette menu + custom palette + eyedropper (no hex field).
     static var comfortColorWidth: CGFloat { 148 }
 
     /// Swatches + palette + eyedropper + hex field.

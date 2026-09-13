@@ -21,6 +21,13 @@ public struct ClipboardSnapshot: Sendable {
         return ClipboardSnapshot(itemPayloads: payloads)
     }
 
+    /// Copies a file path as plain text so paste yields the path string,
+    /// not the file contents (e.g. an image from a .png path).
+    public static func copyFilePath(_ url: URL, to pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(url.path, forType: .string)
+    }
+
     /// Restores prior clipboard contents when available.
     /// If there was nothing to restore, leaves the pasteboard untouched so we
     /// don't invent a fake empty PNG that pollutes clipboard history.

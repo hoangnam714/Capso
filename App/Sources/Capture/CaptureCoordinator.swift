@@ -1691,8 +1691,7 @@ final class CaptureCoordinator {
 
     private func copyCapturePath(result: CaptureResult, autoSavedURL: URL?) {
         guard let url = resolvedCaptureFileURL(result: result, autoSavedURL: autoSavedURL) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([url as NSURL])
+        ClipboardSnapshot.copyFilePath(url)
     }
 
     private func showCaptureInFinder(result: CaptureResult, autoSavedURL: URL?) {

@@ -289,19 +289,22 @@ public struct AnnotationColor: RawRepresentable, Codable, CaseIterable, Hashable
     public static let orange = AnnotationColor(rawValue: "orange")!
     public static let yellow = AnnotationColor(rawValue: "yellow")!
     public static let green = AnnotationColor(rawValue: "green")!
+    public static let cyan = AnnotationColor(rawValue: "cyan")!
     public static let blue = AnnotationColor(rawValue: "blue")!
     public static let purple = AnnotationColor(rawValue: "purple")!
+    public static let pink = AnnotationColor(rawValue: "pink")!
     public static let white = AnnotationColor(rawValue: "white")!
+    public static let gray = AnnotationColor(rawValue: "gray")!
     public static let black = AnnotationColor(rawValue: "black")!
+    public static let brown = AnnotationColor(rawValue: "brown")!
 
     public static let allCases: [AnnotationColor] = [
-        .red, .orange, .yellow, .green, .blue, .purple, .white, .black,
+        .red, .orange, .yellow, .green, .cyan, .blue, .purple, .pink,
+        .white, .gray, .black, .brown,
     ]
 
-    /// Compact swatch row for the annotation toolbar (red / yellow / white / black).
-    public static let basicCases: [AnnotationColor] = [
-        .red, .yellow, .white, .black,
-    ]
+    /// Full preset grid shown in the color popover (not on the toolbar strip).
+    public static let paletteCases: [AnnotationColor] = allCases
 
     public var cgColor: CGColor {
         if let preset = Self.presetColors[rawValue] {
@@ -354,10 +357,14 @@ public struct AnnotationColor: RawRepresentable, Codable, CaseIterable, Hashable
         "orange": CGColor(red: 1, green: 0.58, blue: 0, alpha: 1),
         "yellow": CGColor(red: 1, green: 0.8, blue: 0, alpha: 1),
         "green": CGColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1),
+        "cyan": CGColor(red: 0.2, green: 0.78, blue: 0.88, alpha: 1),
         "blue": CGColor(red: 0, green: 0.48, blue: 1, alpha: 1),
         "purple": CGColor(red: 0.69, green: 0.32, blue: 0.87, alpha: 1),
+        "pink": CGColor(red: 1, green: 0.35, blue: 0.55, alpha: 1),
         "white": CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+        "gray": CGColor(red: 0.55, green: 0.55, blue: 0.58, alpha: 1),
         "black": CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+        "brown": CGColor(red: 0.55, green: 0.38, blue: 0.22, alpha: 1),
     ]
 }
 

@@ -830,8 +830,7 @@ final class RecordingCoordinator {
         }
 
         window.onCopyPath = {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([tempURL as NSURL])
+            ClipboardSnapshot.copyFilePath(tempURL)
         }
 
         window.onShowInFinder = {

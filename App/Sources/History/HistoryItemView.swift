@@ -8,6 +8,7 @@ struct HistoryItemView: View {
     let entry: HistoryEntry
     let coordinator: HistoryCoordinator
     @State private var isHovered = false
+    @State private var isOptionHeld = false
     @State private var thumbnailImage: NSImage?
 
     // Cloud upload state for this item
@@ -92,35 +93,18 @@ struct HistoryItemView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .padding(6)
 
-                // Primary hover actions; Share / Save / Cloud live in More + context menu.
+                // Primary hover actions; hold ⌥ for advanced actions (Share, Save, Copy Path, …).
                 if isHovered || isSelected {
-                    HStack(spacing: 4) {
-                        if isScreenshot && !selectionIncludesThis {
-                            actionButton("pencil.tip.crop.circle") {
-                                coordinator.openInAnnotation(entry)
-                            }
-                            .help(String(localized: "Annotate"))
-                        }
-                        actionButton("doc.on.doc") {
-                            if selectionIncludesThis {
-                                coordinator.copySelectedToClipboard()
-                            } else {
-                                coordinator.copyToClipboard(entry)
-                            }
-                        }
-                        .help(selectionIncludesThis
-                              ? String(localized: "Copy Selected")
-                              : String(localized: "Copy"))
-                        actionButton("trash") { showDeleteConfirm = true }
-                            .help(selectionIncludesThis
-                                  ? String(localized: "Delete Selected")
-                                  : String(localized: "Delete"))
-                        if !selectionIncludesThis {
-                            moreActionsMenu
+                    Group {
+                        if showsAdvancedActions {
+                            advancedHoverActions
+                        } else {
+                            primaryHoverActions
                         }
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .animation(.easeOut(duration: 0.18), value: showsAdvancedActions)
                 }
 
                 // Cloud upload failure toast overlay
@@ -203,7 +187,15 @@ struct HistoryItemView: View {
                 shiftKey: flags.contains(.shift)
             )
         }
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                isOptionHeld = NSEvent.modifierFlags.contains(.option)
+            }
+        }
+        .onModifierKeysChanged(mask: .option) { _, new in
+            isOptionHeld = new.contains(.option)
+        }
         .task(id: entry.id) { await loadThumbnail() }
         .onDisappear { thumbnailImage = nil }
         .contextMenu { contextMenu }
@@ -227,6 +219,71 @@ struct HistoryItemView: View {
                 },
                 onCancel: { showDeleteConfirm = false }
             )
+        }
+    }
+
+    private var showsAdvancedActions: Bool {
+        (isHovered || isSelected) && isOptionHeld && !selectionIncludesThis
+    }
+
+    private var primaryHoverActions: some View {
+        HStack(spacing: 4) {
+            if isScreenshot && !selectionIncludesThis {
+                actionButton("pencil.tip.crop.circle") {
+                    coordinator.openInAnnotation(entry)
+                }
+                .help(String(localized: "Annotate"))
+            }
+            actionButton("doc.on.doc") {
+                if selectionIncludesThis {
+                    coordinator.copySelectedToClipboard()
+                } else {
+                    coordinator.copyToClipboard(entry)
+                }
+            }
+            .help(selectionIncludesThis
+                  ? String(localized: "Copy Selected")
+                  : String(localized: "Copy"))
+            actionButton("trash") { showDeleteConfirm = true }
+                .help(selectionIncludesThis
+                      ? String(localized: "Delete Selected")
+                      : String(localized: "Delete"))
+            if !selectionIncludesThis {
+                moreActionsMenu
+            }
+        }
+    }
+
+    private var advancedHoverActions: some View {
+        HStack(spacing: 4) {
+            actionButton("link") {
+                coordinator.copyPathToClipboard(entry)
+            }
+            .help(String(localized: "Copy Path"))
+            actionButton("folder") {
+                coordinator.showInFinder(entry)
+            }
+            .help(String(localized: "Show in Finder"))
+            actionButton("square.and.arrow.up") {
+                coordinator.shareToApps(entry)
+            }
+            .help(String(localized: "Share…"))
+            actionButton("square.and.arrow.down") {
+                coordinator.saveToFile(entry)
+            }
+            .help(String(localized: "Save to…"))
+            if let cloudURL = entry.cloudURL {
+                actionButton("link.icloud") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(cloudURL, forType: .string)
+                }
+                .help(String(localized: "Copy Cloud Link"))
+            } else if coordinator.shareCoordinator != nil {
+                actionButton("icloud.and.arrow.up") {
+                    Task { await performUpload() }
+                }
+                .help(String(localized: "Upload to Cloud"))
+            }
         }
     }
 

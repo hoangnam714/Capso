@@ -569,6 +569,11 @@ final class HistoryCoordinator {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    func copyPathToClipboard(_ entry: HistoryEntry) {
+        guard let url = fullImageURL(for: entry) else { return }
+        ClipboardSnapshot.copyFilePath(url)
+    }
+
     func openInAnnotation(_ entry: HistoryEntry) {
         guard isScreenshot(entry) else { return }
 

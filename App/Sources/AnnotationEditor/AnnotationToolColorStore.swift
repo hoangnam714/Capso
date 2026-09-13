@@ -51,3 +51,29 @@ enum AnnotationToolColorStore {
         UserDefaults.standard.dictionary(forKey: storageKey) as? [String: String] ?? [:]
     }
 }
+
+/// Last-used stroke colors shown as quick picks on the annotation toolbar (max 3).
+enum AnnotationRecentColorStore {
+    private static let storageKey = "annotationRecentColors"
+    private static let maxCount = 3
+
+    private static let defaultColors: [AnnotationColor] = [.red, .yellow, .black]
+
+    static func recentColors() -> [AnnotationColor] {
+        guard let rawValues = UserDefaults.standard.stringArray(forKey: storageKey),
+              !rawValues.isEmpty else {
+            return defaultColors
+        }
+        let colors = rawValues.compactMap { AnnotationColor(rawValue: $0) }
+        return colors.isEmpty ? defaultColors : Array(colors.prefix(maxCount))
+    }
+
+    static func record(_ color: AnnotationColor) {
+        var colors = recentColors().filter { $0 != color }
+        colors.insert(color, at: 0)
+        if colors.count > maxCount {
+            colors = Array(colors.prefix(maxCount))
+        }
+        UserDefaults.standard.set(colors.map(\.rawValue), forKey: storageKey)
+    }
+}

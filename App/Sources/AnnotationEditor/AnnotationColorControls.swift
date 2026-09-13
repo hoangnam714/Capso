@@ -15,29 +15,18 @@ struct AnnotationColorControls: View {
 
     @State private var sampler: NSColorSampler?
     @StateObject private var colorPanel = AnnotationColorPanelController()
-    @State private var showCompactColorPopover = false
+    @State private var showPalettePopover = false
+    @State private var recentToolbarColors = AnnotationRecentColorStore.recentColors()
 
     var body: some View {
         HStack(spacing: spacing) {
             if compact {
                 compactSwatchMenu
             } else {
-                ForEach(AnnotationColor.basicCases, id: \.self) { color in
-                    Button(action: { currentColor = color }) {
-                        Circle()
-                            .fill(Color(cgColor: color.cgColor))
-                            .frame(width: swatchSize, height: swatchSize)
-                            .overlay(Circle().stroke(currentColor == color ? selectedRingColor : Color.clear, lineWidth: 2))
-                            .overlay(Circle().stroke(Color.black.opacity(0.24), lineWidth: 0.5))
-                            .padding(2)
-                            .background(
-                                Circle()
-                                    .fill(currentColor == color ? selectedRingColor.opacity(0.12) : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(Text(color.displayName))
+                ForEach(recentToolbarColors, id: \.self) { color in
+                    colorSwatchButton(color)
                 }
+                paletteMenuButton
             }
 
             Button(action: showCustomColorPanel) {
@@ -80,11 +69,14 @@ struct AnnotationColorControls: View {
                 .help("Copy HEX Color")
             }
         }
+        .onAppear {
+            recentToolbarColors = AnnotationRecentColorStore.recentColors()
+        }
     }
 
     private var compactSwatchMenu: some View {
         Button {
-            showCompactColorPopover.toggle()
+            showPalettePopover.toggle()
         } label: {
             Circle()
                 .fill(Color(cgColor: currentColor.cgColor))
@@ -95,43 +87,87 @@ struct AnnotationColorControls: View {
         }
         .buttonStyle(.plain)
         .help("Colors")
-        .popover(isPresented: $showCompactColorPopover, arrowEdge: .bottom) {
-            LazyVGrid(
-                columns: [
-                    GridItem(.fixed(swatchSize + 8), spacing: 6),
-                    GridItem(.fixed(swatchSize + 8), spacing: 6),
-                    GridItem(.fixed(swatchSize + 8), spacing: 6),
-                    GridItem(.fixed(swatchSize + 8), spacing: 6),
-                ],
-                spacing: 6
-            ) {
-                ForEach(AnnotationColor.basicCases, id: \.self) { color in
-                    Button {
-                        currentColor = color
-                        showCompactColorPopover = false
-                    } label: {
-                        Circle()
-                            .fill(Color(cgColor: color.cgColor))
-                            .frame(width: swatchSize, height: swatchSize)
-                            .overlay(
-                                Circle().stroke(
-                                    currentColor == color ? selectedRingColor : Color.black.opacity(0.24),
-                                    lineWidth: currentColor == color ? 2 : 0.5
-                                )
-                            )
-                            .padding(2)
-                    }
-                    .buttonStyle(.plain)
-                    .help(Text(color.displayName))
-                }
-            }
-            .padding(10)
+        .popover(isPresented: $showPalettePopover, arrowEdge: .bottom) {
+            colorPaletteGrid(dismissOnSelect: true)
         }
+    }
+
+    private var paletteMenuButton: some View {
+        Button {
+            showPalettePopover.toggle()
+        } label: {
+            Image(systemName: "circle.grid.3x3.fill")
+                .font(.system(size: max(11, swatchSize - 7), weight: .medium))
+                .foregroundStyle(Color.primary.opacity(0.88))
+                .frame(width: swatchSize + 8, height: swatchSize + 8)
+                .background(Circle().fill(Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .help("More Colors")
+        .popover(isPresented: $showPalettePopover, arrowEdge: .bottom) {
+            colorPaletteGrid(dismissOnSelect: true)
+        }
+    }
+
+    private func selectColor(_ color: AnnotationColor) {
+        currentColor = color
+        AnnotationRecentColorStore.record(color)
+        recentToolbarColors = AnnotationRecentColorStore.recentColors()
+    }
+
+    private func colorSwatchButton(_ color: AnnotationColor) -> some View {
+        Button(action: { selectColor(color) }) {
+            Circle()
+                .fill(Color(cgColor: color.cgColor))
+                .frame(width: swatchSize, height: swatchSize)
+                .overlay(Circle().stroke(currentColor == color ? selectedRingColor : Color.clear, lineWidth: 2))
+                .overlay(Circle().stroke(Color.black.opacity(0.24), lineWidth: 0.5))
+                .padding(2)
+                .background(
+                    Circle()
+                        .fill(currentColor == color ? selectedRingColor.opacity(0.12) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(Text(color.displayName))
+    }
+
+    private func colorPaletteGrid(dismissOnSelect: Bool) -> some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.fixed(swatchSize + 8), spacing: 6),
+                count: 6
+            ),
+            spacing: 6
+        ) {
+            ForEach(AnnotationColor.paletteCases, id: \.self) { color in
+                Button {
+                    selectColor(color)
+                    if dismissOnSelect {
+                        showPalettePopover = false
+                    }
+                } label: {
+                    Circle()
+                        .fill(Color(cgColor: color.cgColor))
+                        .frame(width: swatchSize, height: swatchSize)
+                        .overlay(
+                            Circle().stroke(
+                                currentColor == color ? selectedRingColor : Color.black.opacity(0.24),
+                                lineWidth: currentColor == color ? 2 : 0.5
+                            )
+                        )
+                        .padding(2)
+                }
+                .buttonStyle(.plain)
+                .help(Text(color.displayName))
+            }
+        }
+        .padding(10)
     }
 
     private func showCustomColorPanel() {
         colorPanel.show(initialColor: currentColor.nsColor) { color in
-            currentColor = AnnotationColor(nsColor: color)
+            selectColor(AnnotationColor(nsColor: color))
         }
     }
 
@@ -140,7 +176,7 @@ struct AnnotationColorControls: View {
         self.sampler = sampler
         sampler.show { color in
             if let color {
-                currentColor = AnnotationColor(nsColor: color)
+                selectColor(AnnotationColor(nsColor: color))
             }
             self.sampler = nil
         }
