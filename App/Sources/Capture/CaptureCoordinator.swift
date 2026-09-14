@@ -424,7 +424,9 @@ final class CaptureCoordinator {
         // the live scrolling capture on the real desktop.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, self.isCurrentSession(session) else { return }
-            self.showFrozenOverlay { rect, screen in
+            self.showFrozenOverlay(
+                selectionGuide: String(localized: "Drag to select the scrollable region")
+            ) { rect, screen in
                 self.startScrollingCapture(rect: rect, screen: screen)
             }
         }
@@ -843,6 +845,7 @@ final class CaptureCoordinator {
     /// scrolling capture or the self-timer.
     private func showFrozenOverlay(
         mode: CaptureOverlayMode = .area,
+        selectionGuide: String? = nil,
         areaSelected: ((CGRect, NSScreen) -> Void)? = nil
     ) {
         dismissOverlay()
@@ -858,7 +861,11 @@ final class CaptureCoordinator {
         // Step 2: Create transparent overlay windows (top layer) for selection
         let frozenScreensForCapture = frozenScreens
         for (screen, _) in frozenScreens {
-            let overlay = CaptureOverlayWindow(screen: screen, settings: settings)
+            let overlay = CaptureOverlayWindow(
+                screen: screen,
+                settings: settings,
+                selectionGuide: selectionGuide
+            )
             overlay.onAreaSelected = { [weak self] rect, screen in
                 guard let self else { return }
                 self.dismissOverlay()
@@ -1137,10 +1144,6 @@ final class CaptureCoordinator {
         let overlay = ScrollCaptureOverlay()
         self.scrollCaptureOverlay = overlay
 
-        overlay.onStart = { [weak self] in
-            self?.beginScrollingCaptureLoop()
-        }
-
         overlay.onDone = { [weak self] in
             self?.finishScrollingCapture()
         }
@@ -1150,6 +1153,8 @@ final class CaptureCoordinator {
         }
 
         overlay.show(selectionRect: rect, screen: screen)
+        overlay.setCapturing(true)
+        beginScrollingCaptureLoop()
     }
 
     /// Called when user clicks Start — begins the capture loop.
@@ -1157,15 +1162,15 @@ final class CaptureCoordinator {
         let captureRect = scrollCaptureRect
         let displayID = scrollCaptureDisplayID
 
+        let excludedWindowIDs = scrollCaptureOverlay?.windowIDs ?? []
         let config = ScrollCaptureConfig(
             captureRect: captureRect,
             displayID: displayID,
-            mode: .manual
+            mode: .manual,
+            excludedWindowIDs: excludedWindowIDs
         )
         let controller = ScrollCaptureController(config: config)
         self.scrollCaptureController = controller
-
-        scrollCaptureOverlay?.setCapturing(true)
 
         controller.start(
             onProgress: { [weak self] progress in
@@ -1174,6 +1179,7 @@ final class CaptureCoordinator {
                         self?.scrollCaptureOverlay?.updatePreview(
                             image: mergedImage,
                             height: progress.currentHeight,
+                            maxHeight: progress.maxHeight,
                             frameCount: progress.frameCount
                         )
                     }

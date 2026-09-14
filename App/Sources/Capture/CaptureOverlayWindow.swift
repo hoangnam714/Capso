@@ -15,7 +15,12 @@ final class CaptureOverlayWindow: NSPanel {
     private var globalEscMonitor: Any?
     private var localEscMonitor: Any?
 
-    init(screen: NSScreen, settings: AppSettings, presetsDisabled: Bool = false) {
+    init(
+        screen: NSScreen,
+        settings: AppSettings,
+        presetsDisabled: Bool = false,
+        selectionGuide: String? = nil
+    ) {
         self.settings = settings
         super.init(
             contentRect: screen.frame,
@@ -44,7 +49,8 @@ final class CaptureOverlayWindow: NSPanel {
             frame: NSRect(origin: .zero, size: screen.frame.size),
             settings: settings,
             safeAreaTopInset: screen.safeAreaInsets.top,
-            presetsDisabled: presetsDisabled
+            presetsDisabled: presetsDisabled,
+            selectionGuide: selectionGuide
         )
         overlayView.onSelectionComplete = { [weak self] rect in
             guard let self, let screen = self.screen else { return }

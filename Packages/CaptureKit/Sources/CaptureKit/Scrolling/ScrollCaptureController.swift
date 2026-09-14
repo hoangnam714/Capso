@@ -9,17 +9,20 @@ public struct ScrollCaptureConfig: Sendable {
     public let displayID: CGDirectDisplayID
     public let mode: ScrollMode
     public let maxHeight: Int
+    public let excludedWindowIDs: [CGWindowID]
 
     public init(
         captureRect: CGRect,
         displayID: CGDirectDisplayID,
         mode: ScrollMode = .manual,
-        maxHeight: Int = 30_000
+        maxHeight: Int = 30_000,
+        excludedWindowIDs: [CGWindowID] = []
     ) {
         self.captureRect = captureRect
         self.displayID = displayID
         self.mode = mode
         self.maxHeight = maxHeight
+        self.excludedWindowIDs = excludedWindowIDs
     }
 }
 
@@ -226,12 +229,14 @@ public final class ScrollCaptureController: @unchecked Sendable {
                     return nil
                 }
 
+                let excludedIDs = Set(config.excludedWindowIDs)
                 let myBundleID = Bundle.main.bundleIdentifier ?? ""
-                let myWindows = content.windows.filter {
-                    $0.owningApplication?.bundleIdentifier == myBundleID
+                let windowsToExclude = content.windows.filter {
+                    excludedIDs.contains(CGWindowID($0.windowID))
+                        || $0.owningApplication?.bundleIdentifier == myBundleID
                 }
 
-                let filter = SCContentFilter(display: display, excludingWindows: myWindows)
+                let filter = SCContentFilter(display: display, excludingWindows: windowsToExclude)
                 let streamConfig = SCStreamConfiguration()
                 streamConfig.captureResolution = .best
                 streamConfig.showsCursor = false

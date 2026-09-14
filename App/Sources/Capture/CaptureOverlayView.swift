@@ -36,6 +36,8 @@ final class CaptureOverlayView: NSView {
     /// When true, preset features (badge, R-key, right-click menu, ratio lock) are disabled.
     /// Used by OCR and Recording overlays which always use freeform selection.
     private let presetsDisabled: Bool
+    /// Optional centered guide shown instead of the preset badge.
+    private let selectionGuide: String?
 
     private var mode: CaptureOverlayMode = .area
     private var isDragging = false
@@ -94,10 +96,12 @@ final class CaptureOverlayView: NSView {
         frame: NSRect,
         settings: AppSettings,
         safeAreaTopInset: CGFloat,
-        presetsDisabled: Bool = false
+        presetsDisabled: Bool = false,
+        selectionGuide: String? = nil
     ) {
         self.settings = settings
         self.safeAreaTopInset = safeAreaTopInset
+        self.selectionGuide = selectionGuide
         // Presets are disabled when explicitly requested (OCR/Recording) or when
         // the user has turned off the feature in Settings.
         self.presetsDisabled = presetsDisabled || !settings.capturePresetsEnabled
@@ -365,7 +369,7 @@ final class CaptureOverlayView: NSView {
                     drawDimensionLabel(for: fixedRect, localVisibleRect: fixedRect, in: context)
                 }
                 // Still draw badge even without a mouse location
-                drawPresetBadge(in: context)
+                drawTopGuideBadge(in: context)
             } else {
                 drawDimmedBackdrop(clearing: nil, in: context)
                 // Freeform or aspect-ratio mode: standard crosshair
@@ -373,7 +377,7 @@ final class CaptureOverlayView: NSView {
                     drawReticle(at: currentMouseLocation, in: context)
                     drawCoordinateLabel(at: currentMouseLocation, in: context)
                 }
-                drawPresetBadge(in: context)
+                drawTopGuideBadge(in: context)
             }
         }
     }
@@ -389,13 +393,32 @@ final class CaptureOverlayView: NSView {
         context.restoreGState()
     }
 
-    // MARK: - Preset Badge
+    // MARK: - Guide Badge
+
+    private func drawTopGuideBadge(in context: CGContext) {
+        if let selectionGuide {
+            drawGuideBadge(text: selectionGuide, in: context)
+            return
+        }
+
+        if presetsDisabled {
+            let guide: String
+            switch mode {
+            case .area:
+                guide = String(localized: "Drag to select area · Space: record window · Esc: Cancel")
+            case .windowSelection:
+                guide = String(localized: "Click window to record · Space: select area · Esc: Cancel")
+            }
+            drawGuideBadge(text: guide, in: context)
+            return
+        }
+
+        drawPresetBadge(in: context)
+    }
 
     /// Draw a centered badge at the top of the screen showing the active
     /// preset and a hint to press R to change it.
     private func drawPresetBadge(in context: CGContext) {
-        guard !presetsDisabled else { return }
-
         let presetName = activePreset.displayName
         let hintText = "   R to change"
         let fullText = "\(presetName)\(hintText)"
@@ -417,7 +440,20 @@ final class CaptureOverlayView: NSView {
         let combined = NSMutableAttributedString(attributedString: presetStr)
         combined.append(hintStr)
 
-        let textSize = combined.size()
+        drawGuideBadge(attributedText: combined, in: context)
+    }
+
+    private func drawGuideBadge(text: String, in context: CGContext) {
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ]
+        drawGuideBadge(attributedText: NSAttributedString(string: text, attributes: attrs), in: context)
+    }
+
+    private func drawGuideBadge(attributedText: NSAttributedString, in context: CGContext) {
+        let textSize = attributedText.size()
         let hPadding: CGFloat = 14
         let vPadding: CGFloat = 7
         let badgeWidth = textSize.width + hPadding * 2
@@ -444,7 +480,7 @@ final class CaptureOverlayView: NSView {
         // Draw text
         let textX = badgeX + hPadding
         let textY = badgeY + (badgeHeight - textSize.height) / 2
-        combined.draw(at: NSPoint(x: textX, y: textY))
+        attributedText.draw(at: NSPoint(x: textX, y: textY))
     }
 
     private func drawWindowSelectionMode(in context: CGContext) {
@@ -479,6 +515,8 @@ final class CaptureOverlayView: NSView {
             // Window name label
             drawWindowLabel(name: hoveredWindowName, for: viewRect, in: context)
         }
+
+        drawTopGuideBadge(in: context)
     }
 
     private func drawWindowLabel(name: String, for rect: CGRect, in context: CGContext) {

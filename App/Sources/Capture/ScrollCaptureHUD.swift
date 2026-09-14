@@ -4,7 +4,7 @@ import SwiftUI
 import CaptureKit
 
 /// Persistent overlay shown during scrolling capture.
-/// Shows: selection border, live preview on the left, Cancel/Start/Done at the bottom.
+/// Shows: selection border, live preview, Cancel/Done controls.
 @MainActor
 final class ScrollCaptureOverlay {
     private var borderWindow: NSPanel?
@@ -16,7 +16,6 @@ final class ScrollCaptureOverlay {
     private var keyEventTap: CFMachPort?
     private var keyEventTapRunLoopSource: CFRunLoopSource?
 
-    var onStart: (() -> Void)?
     var onDone: (() -> Void)?
     var onCancel: (() -> Void)?
 
@@ -39,9 +38,10 @@ final class ScrollCaptureOverlay {
         viewModel.isCapturing = capturing
     }
 
-    func updatePreview(image: CGImage, height: Int, frameCount: Int) {
+    func updatePreview(image: CGImage, height: Int, maxHeight: Int, frameCount: Int) {
         viewModel.previewImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         viewModel.currentHeight = height
+        viewModel.maxHeight = maxHeight
         viewModel.frameCount = frameCount
     }
 
@@ -152,12 +152,10 @@ final class ScrollCaptureOverlay {
         keyEventTapRunLoopSource = source
     }
 
-    /// Enter: Start when idle, Done when capturing.
+    /// Enter: Done when capturing.
     private func handlePrimaryKey() {
         if viewModel.isCapturing {
             onDone?()
-        } else {
-            onStart?()
         }
     }
 
@@ -179,6 +177,7 @@ final class ScrollCaptureOverlay {
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
+        panel.sharingType = .none
 
         let borderView = ScrollCaptureBorderView(frame: NSRect(origin: .zero, size: borderRect.size))
         panel.contentView = borderView
@@ -190,8 +189,8 @@ final class ScrollCaptureOverlay {
     // MARK: - Controls
 
     private func showControls(screenRect: NSRect, screen: NSScreen) {
-        let controlsWidth: CGFloat = 360
-        let controlsHeight: CGFloat = 64
+        let controlsWidth: CGFloat = 380
+        let controlsHeight: CGFloat = 78
         let gap: CGFloat = 10
 
         // Try below the selection first
@@ -225,10 +224,10 @@ final class ScrollCaptureOverlay {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
+        panel.sharingType = .none
 
         let hostingView = NSHostingView(rootView: ScrollCaptureControlsView(
             viewModel: viewModel,
-            onStart: { [weak self] in self?.onStart?() },
             onCancel: { [weak self] in self?.onCancel?() },
             onDone: { [weak self] in self?.onDone?() }
         ))
@@ -243,16 +242,17 @@ final class ScrollCaptureOverlay {
     private func showPreview(screenRect: NSRect, screen: NSScreen) {
         let previewWidth: CGFloat = 180
         let previewHeight: CGFloat = min(screenRect.height, 400)
-        let previewX = screenRect.origin.x - previewWidth - 12
+        let gap: CGFloat = 12
 
-        guard previewX >= screen.frame.origin.x else { return }
-
-        let previewRect = NSRect(
-            x: previewX,
-            y: screenRect.midY - previewHeight / 2,
+        guard let previewRect = previewPlacement(
+            screenRect: screenRect,
+            screen: screen,
             width: previewWidth,
-            height: previewHeight
-        )
+            height: previewHeight,
+            gap: gap
+        ) else {
+            return
+        }
 
         let panel = NSPanel(
             contentRect: previewRect,
@@ -266,12 +266,66 @@ final class ScrollCaptureOverlay {
         panel.hasShadow = true
         panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
+        panel.sharingType = .none
 
         let hostingView = NSHostingView(rootView: ScrollCapturePreviewView(viewModel: viewModel))
         panel.contentView = hostingView
 
         self.previewWindow = panel
         panel.orderFrontRegardless()
+    }
+
+    private func previewPlacement(
+        screenRect: NSRect,
+        screen: NSScreen,
+        width: CGFloat,
+        height: CGFloat,
+        gap: CGFloat
+    ) -> NSRect? {
+        let screenFrame = screen.frame
+        let clampedHeight = min(height, screen.visibleFrame.height - gap * 2)
+
+        func clampedY(for midY: CGFloat) -> CGFloat {
+            let y = midY - clampedHeight / 2
+            return min(
+                max(y, screen.visibleFrame.minY + gap),
+                screen.visibleFrame.maxY - clampedHeight - gap
+            )
+        }
+
+        // Left of selection
+        let leftX = screenRect.origin.x - width - gap
+        if leftX >= screenFrame.minX {
+            return NSRect(x: leftX, y: clampedY(for: screenRect.midY), width: width, height: clampedHeight)
+        }
+
+        // Right of selection
+        let rightX = screenRect.maxX + gap
+        if rightX + width <= screenFrame.maxX {
+            return NSRect(x: rightX, y: clampedY(for: screenRect.midY), width: width, height: clampedHeight)
+        }
+
+        // Above selection
+        let aboveY = screenRect.maxY + gap
+        if aboveY + clampedHeight <= screen.visibleFrame.maxY {
+            let x = min(
+                max(screenRect.midX - width / 2, screen.visibleFrame.minX + gap),
+                screen.visibleFrame.maxX - width - gap
+            )
+            return NSRect(x: x, y: aboveY, width: width, height: clampedHeight)
+        }
+
+        // Below selection
+        let belowY = screenRect.origin.y - clampedHeight - gap
+        if belowY >= screen.visibleFrame.minY {
+            let x = min(
+                max(screenRect.midX - width / 2, screen.visibleFrame.minX + gap),
+                screen.visibleFrame.maxX - width - gap
+            )
+            return NSRect(x: x, y: belowY, width: width, height: clampedHeight)
+        }
+
+        return nil
     }
 }
 
@@ -312,17 +366,20 @@ final class ScrollCaptureBorderView: NSView {
 final class ScrollCaptureViewModel {
     var previewImage: NSImage?
     var currentHeight: Int = 0
+    var maxHeight: Int = 30_000
     var frameCount: Int = 0
     var isCapturing: Bool = false
 
+    var progressFraction: Double {
+        guard maxHeight > 0 else { return 0 }
+        return min(1.0, Double(currentHeight) / Double(maxHeight))
+    }
+
     var statusText: String {
-        if !isCapturing {
-            return String(localized: "Enter to start · Esc to exit")
-        }
         if frameCount <= 1 {
-            return String(localized: "Scroll down slowly · Enter = Done · Esc = Cancel")
+            return String(localized: "Scroll down slowly · Enter or Done when finished · Esc to cancel")
         }
-        return String(localized: "\(currentHeight)px · \(frameCount) frames · Enter Done · Esc Cancel")
+        return String(localized: "\(currentHeight) px · \(frameCount) frames")
     }
 }
 
@@ -330,48 +387,40 @@ final class ScrollCaptureViewModel {
 
 struct ScrollCaptureControlsView: View {
     let viewModel: ScrollCaptureViewModel
-    let onStart: () -> Void
     let onCancel: () -> Void
     let onDone: () -> Void
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             HStack(spacing: 10) {
                 controlButton(
                     icon: "xmark",
-                    label: viewModel.isCapturing
-                        ? String(localized: "Cancel")
-                        : String(localized: "Exit"),
+                    label: String(localized: "Cancel"),
                     shortcut: "Esc",
                     color: .white.opacity(0.18),
                     action: onCancel
                 )
 
-                if viewModel.isCapturing {
-                    controlButton(
-                        icon: "checkmark",
-                        label: String(localized: "Done"),
-                        shortcut: "⏎",
-                        color: Color.accentColor,
-                        action: onDone
-                    )
-                } else {
-                    controlButton(
-                        icon: "play.fill",
-                        label: String(localized: "Start"),
-                        shortcut: "⏎",
-                        color: Color.green,
-                        action: onStart
-                    )
-                }
+                controlButton(
+                    icon: "checkmark",
+                    label: String(localized: "Done"),
+                    shortcut: "⏎",
+                    color: Color.accentColor,
+                    action: onDone
+                )
             }
 
-            Text(viewModel.isCapturing
-                 ? String(localized: "Scroll the page, then press Enter or Done")
-                 : String(localized: "Press Enter to start capturing"))
+            if viewModel.isCapturing {
+                ProgressView(value: viewModel.progressFraction)
+                    .tint(.accentColor)
+                    .frame(maxWidth: .infinity)
+            }
+
+            Text(viewModel.statusText)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(1)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -421,7 +470,6 @@ struct ScrollCapturePreviewView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let image = viewModel.previewImage {
-                // Scale-to-fit: show the entire captured image shrunk to fit the panel
                 GeometryReader { geo in
                     Image(nsImage: image)
                         .resizable()
@@ -434,7 +482,7 @@ struct ScrollCapturePreviewView: View {
                     Image(systemName: "arrow.down.doc")
                         .font(.system(size: 20))
                         .foregroundStyle(.tertiary)
-                    Text(viewModel.statusText)
+                    Text(String(localized: "Preview appears as you scroll"))
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -446,7 +494,7 @@ struct ScrollCapturePreviewView: View {
                 Text(viewModel.statusText)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                 Spacer()
             }
             .padding(.horizontal, 8)

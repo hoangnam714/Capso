@@ -13,9 +13,11 @@ final class RecordingToolbarWindow: NSPanel {
         selectionRect: CGRect,
         screen: NSScreen,
         settings: AppSettings,
+        selectionLabel: String,
         onRecord: @escaping (RecordingFormatChoice, Bool, String?, Bool, Bool) -> Void,
         onCameraToggled: @escaping (Bool, String?) async -> Bool,
-        onChangeArea: @escaping () -> Void,
+        onSelectArea: @escaping () -> Void,
+        onSelectWindow: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onCameraSettingsChanged: @escaping () -> Void
     ) {
@@ -49,10 +51,12 @@ final class RecordingToolbarWindow: NSPanel {
         let view = RecordingToolbarWrapper(
             width: outputSize.width,
             height: outputSize.height,
+            selectionLabel: selectionLabel,
             settings: settings,
             onRecord: onRecord,
             onCameraToggled: onCameraToggled,
-            onChangeArea: onChangeArea,
+            onSelectArea: onSelectArea,
+            onSelectWindow: onSelectWindow,
             onCancel: onCancel,
             onCameraSettingsChanged: onCameraSettingsChanged
         )
@@ -92,10 +96,12 @@ final class RecordingToolbarWindow: NSPanel {
 private struct RecordingToolbarWrapper: View {
     let width: Int
     let height: Int
+    let selectionLabel: String
     let settings: AppSettings
     let onRecord: (RecordingFormatChoice, Bool, String?, Bool, Bool) -> Void
     let onCameraToggled: (Bool, String?) async -> Bool
-    let onChangeArea: () -> Void
+    let onSelectArea: () -> Void
+    let onSelectWindow: () -> Void
     let onCancel: () -> Void
     let onCameraSettingsChanged: () -> Void
 
@@ -109,6 +115,7 @@ private struct RecordingToolbarWrapper: View {
         RecordingToolbarView(
             width: width,
             height: height,
+            selectionLabel: selectionLabel,
             cameraEnabled: $cameraEnabled,
             selectedCameraID: $selectedCameraID,
             micEnabled: $micEnabled,
@@ -120,7 +127,8 @@ private struct RecordingToolbarWrapper: View {
             onRecordGIF: {
                 onRecord(.gif, cameraEnabled, selectedCameraID, micEnabled, systemAudioEnabled)
             },
-            onChangeArea: onChangeArea,
+            onSelectArea: onSelectArea,
+            onSelectWindow: onSelectWindow,
             onCancel: onCancel,
             onCameraSettingsChanged: onCameraSettingsChanged
         )

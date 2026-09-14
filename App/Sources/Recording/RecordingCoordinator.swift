@@ -62,6 +62,7 @@ final class RecordingCoordinator {
     private var selectedScreen: NSScreen?
     private var selectedDisplayID: CGDirectDisplayID = CGMainDisplayID()
     private var selectedTarget: RecordingTarget?
+    private var selectedWindowTitle: String?
 
     // Current recording inputs (used by restart)
     private var currentRecordingFormat: RecordingFormatChoice?
@@ -217,6 +218,7 @@ final class RecordingCoordinator {
             height: rect.height
         )
         selectedTarget = .displayArea(displayID: screen.displayID, rect: selectedRect)
+        selectedWindowTitle = nil
 
         // Show the recording toolbar below the selected area
         showToolbar(selectionViewRect: rect, screen: screen)
@@ -243,6 +245,7 @@ final class RecordingCoordinator {
             guard !displayLocalRect.isNull, !displayLocalRect.isEmpty else { return }
             selectedRect = displayLocalRect
             selectedTarget = .window(windowID: windowID)
+            selectedWindowTitle = window.appName ?? window.title
 
             let screenFrame = screen.frame
             let viewY = screenFrame.height - selectedRect.origin.y - selectedRect.height
@@ -284,10 +287,15 @@ final class RecordingCoordinator {
         selectionBorderWindow = SelectionBorderWindow(selectionRect: globalSelectionRect, screen: screen)
         selectionBorderWindow?.show()
 
+        let selectionLabel = selectedWindowTitle.map {
+            String(localized: "Window: \($0)")
+        } ?? String(localized: "Custom Area")
+
         toolbarWindow = RecordingToolbarWindow(
             selectionRect: globalSelectionRect,
             screen: screen,
             settings: settings,
+            selectionLabel: selectionLabel,
             onRecord: { [weak self] format, cameraEnabled, cameraDeviceID, micEnabled, systemAudioEnabled in
                 guard let self else { return }
                 let willShowCountdown = self.settings.showCountdown && self.selectedScreen != nil
@@ -329,10 +337,15 @@ final class RecordingCoordinator {
                     return true
                 }
             },
-            onChangeArea: { [weak self] in
+            onSelectArea: { [weak self] in
                 guard let self else { return }
                 self.dismissToolbarUI()
                 self.showAreaSelectionOverlay()
+            },
+            onSelectWindow: { [weak self] in
+                guard let self else { return }
+                self.dismissToolbarUI()
+                self.requestWindowSelectionOverlay()
             },
             onCancel: { [weak self] in
                 self?.cancelPendingRecordingFlow()

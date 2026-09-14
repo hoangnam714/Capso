@@ -12,6 +12,7 @@ enum RecordingFormatChoice: String, CaseIterable {
 struct RecordingToolbarView: View {
     let width: Int
     let height: Int
+    let selectionLabel: String
     @Binding var cameraEnabled: Bool
     @Binding var selectedCameraID: String?
     @Binding var micEnabled: Bool
@@ -19,7 +20,8 @@ struct RecordingToolbarView: View {
     let settings: SharedKit.AppSettings
     let onRecordVideo: () -> Void
     let onRecordGIF: () -> Void
-    let onChangeArea: () -> Void
+    let onSelectArea: () -> Void
+    let onSelectWindow: () -> Void
     let onCancel: () -> Void
     let onCameraSettingsChanged: () -> Void
 
@@ -58,6 +60,13 @@ struct RecordingToolbarView: View {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.45))
                 }
+
+                Text(selectionLabel)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity)
 
                 // Controls row
                 HStack(spacing: 4) {
@@ -137,23 +146,7 @@ struct RecordingToolbarView: View {
                 Divider()
                     .background(.white.opacity(0.1))
 
-                Button(action: onChangeArea) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "selection.pin.in.out")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.8))
-
-                        Text("Change Area")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                selectionMoreMenu
             }
         }
         .frame(width: 220)
@@ -168,6 +161,36 @@ struct RecordingToolbarView: View {
         // white — the toolbar has a dark background regardless of the
         // system color scheme.
         .environment(\.colorScheme, .dark)
+    }
+
+    // MARK: - Selection Menu
+
+    private var selectionMoreMenu: some View {
+        Menu {
+            Button(action: onSelectArea) {
+                Label("Select Area", systemImage: "selection.pin.in.out")
+            }
+            Button(action: onSelectWindow) {
+                Label("Select Window", systemImage: "macwindow")
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+
+                Text("More")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
     }
 
     // MARK: - Mic Menu
