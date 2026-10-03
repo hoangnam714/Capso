@@ -1733,6 +1733,24 @@ final class CaptureCoordinator {
     ) {
         quickAccessPreviewWindow?.close()
         let previewWindow = QuickAccessPreviewWindow(image: result.image, anchorScreen: anchorScreen)
+        previewWindow.onAnnotate = { [weak self, weak previewWindow, weak sourceQuickAccess] in
+            guard let self, let previewWindow else { return }
+            let anchor = previewWindow.screen
+            previewWindow.close()
+            if let sourceQuickAccess {
+                self.dismissQuickAccessWindow(sourceQuickAccess)
+            }
+            self.openAnnotationEditor(result, anchorScreen: anchor, historyEntryID: entryID)
+        }
+        previewWindow.onPin = { [weak self, weak previewWindow, weak sourceQuickAccess] in
+            guard let self, let previewWindow else { return }
+            let anchor = previewWindow.frame
+            previewWindow.close()
+            if let sourceQuickAccess {
+                self.dismissQuickAccessWindow(sourceQuickAccess)
+            }
+            self.pinToScreen(result, anchor: anchor)
+        }
         previewWindow.onCopy = { [weak self] in
             self?.copyImageToClipboard(result.image)
         }
@@ -1854,7 +1872,7 @@ final class CaptureCoordinator {
             anchorScreen: screen,
             onSave: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
                 guard let self else { return }
-                self.saveRenderedImage(
+                let autoSavedURL = self.saveRenderedImageReturningURL(
                     rendered,
                     sourceAppName: sourceAppName,
                     sourceWindowTitle: sourceWindowTitle,
@@ -1868,8 +1886,27 @@ final class CaptureCoordinator {
                     sourceWindowTitle: sourceWindowTitle,
                     date: date
                 )
+                let savedEntryID = self.activeAnnotationHistoryEntryID ?? UUID()
                 self.activeAnnotationHistoryEntryID = nil
                 self.annotationWindow = nil
+
+                if self.settings.screenshotShowPreview {
+                    let editedResult = CaptureResult(
+                        image: rendered,
+                        mode: .area,
+                        captureRect: .zero,
+                        windowName: sourceWindowTitle,
+                        appName: sourceAppName,
+                        timestamp: date,
+                        displayID: screen?.displayID ?? CGMainDisplayID()
+                    )
+                    self.showQuickAccess(
+                        for: editedResult,
+                        entryID: savedEntryID,
+                        clipboardBackup: nil,
+                        autoSavedURL: autoSavedURL
+                    )
+                }
             },
             onCopy: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
                 guard let self else { return }
@@ -1980,13 +2017,33 @@ final class CaptureCoordinator {
             screen: screen,
             screenLocalRect: screenLocalRect,
             onSave: { [weak self] rendered in
-                self?.saveRenderedImage(
+                guard let self else { return }
+                let autoSavedURL = self.saveRenderedImageReturningURL(
                     rendered,
                     sourceAppName: result.appName,
                     sourceWindowTitle: result.windowName,
                     date: result.timestamp
                 )
-                self?.inlineAnnotationWindow = nil
+                self.inlineAnnotationWindow = nil
+
+                if self.settings.screenshotShowPreview {
+                    let editedResult = CaptureResult(
+                        image: rendered,
+                        mode: result.mode,
+                        captureRect: result.captureRect,
+                        windowName: result.windowName,
+                        appName: result.appName,
+                        appBundleIdentifier: result.appBundleIdentifier,
+                        timestamp: result.timestamp,
+                        displayID: result.displayID
+                    )
+                    self.showQuickAccess(
+                        for: editedResult,
+                        entryID: UUID(),
+                        clipboardBackup: nil,
+                        autoSavedURL: autoSavedURL
+                    )
+                }
             },
             onCopy: { [weak self] rendered in
                 self?.copyRenderedImage(rendered)
@@ -2199,13 +2256,28 @@ final class CaptureCoordinator {
         return (data, preset.fileFormat)
     }
 
+    @discardableResult
+    private func saveRenderedImageReturningURL(
+        _ image: CGImage,
+        sourceAppName: String? = nil,
+        sourceWindowTitle: String? = nil,
+        date: Date = Date()
+    ) -> URL? {
+        saveImageToFileReturningURL(
+            image,
+            sourceAppName: sourceAppName,
+            sourceWindowTitle: sourceWindowTitle,
+            date: date
+        )
+    }
+
     private func saveRenderedImage(
         _ image: CGImage,
         sourceAppName: String? = nil,
         sourceWindowTitle: String? = nil,
         date: Date = Date()
     ) {
-        saveImageToFile(
+        _ = saveRenderedImageReturningURL(
             image,
             sourceAppName: sourceAppName,
             sourceWindowTitle: sourceWindowTitle,

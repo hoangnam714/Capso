@@ -5,6 +5,8 @@ import SharedKit
 @MainActor
 final class QuickAccessPreviewWindow: NSPanel {
     var onClose: (() -> Void)?
+    var onAnnotate: (() -> Void)?
+    var onPin: (() -> Void)?
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
     var onShare: (() -> Void)?
@@ -28,8 +30,9 @@ final class QuickAccessPreviewWindow: NSPanel {
             maxViewportFraction: 0.82
         )
         let toolbarHeight: CGFloat = 52
-        let contentWidth = max(320, previewSize.width)
-        let contentHeight = max(220, previewSize.height) + toolbarHeight
+        let minContentWidth: CGFloat = 460
+        let contentWidth = max(minContentWidth, previewSize.width)
+        let contentHeight = max(260, previewSize.height) + toolbarHeight
         let contentRect = NSRect(
             x: screen.visibleFrame.midX - contentWidth / 2,
             y: screen.visibleFrame.midY - contentHeight / 2,
@@ -49,12 +52,14 @@ final class QuickAccessPreviewWindow: NSPanel {
         self.hidesOnDeactivate = false
         self.isReleasedWhenClosed = false
         self.isRestorable = false
-        self.minSize = NSSize(width: 320, height: 220)
+        self.minSize = NSSize(width: minContentWidth, height: 260)
         self.collectionBehavior = [.canJoinAllSpaces]
 
         let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         let view = QuickAccessPreviewView(
             image: nsImage,
+            onAnnotate: { [weak self] in self?.onAnnotate?() },
+            onPin: { [weak self] in self?.onPin?() },
             onCopy: { [weak self] in self?.onCopy?() },
             onSave: { [weak self] in self?.onSave?() },
             onShare: { [weak self] in self?.onShare?() },
@@ -82,6 +87,8 @@ final class QuickAccessPreviewWindow: NSPanel {
 
 private struct QuickAccessPreviewView: View {
     let image: NSImage
+    let onAnnotate: (() -> Void)?
+    let onPin: (() -> Void)?
     let onCopy: () -> Void
     let onSave: () -> Void
     let onShare: () -> Void
@@ -104,6 +111,9 @@ private struct QuickAccessPreviewView: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
+                .onTapGesture(count: 2) {
+                    onAnnotate?()
+                }
                 .onHover { hovering in
                     if hovering {
                         isOptionHeld = NSEvent.modifierFlags.contains(.option)
@@ -145,6 +155,15 @@ private struct QuickAccessPreviewView: View {
                         )
                     }
                 } else {
+                    if let onAnnotate {
+                        previewActionButton(
+                            title: String(localized: "Edit"),
+                            systemImage: "pencil.tip.crop.circle",
+                            action: onAnnotate
+                        )
+                        .keyboardShortcut("e", modifiers: .command)
+                    }
+
                     previewActionButton(
                         title: String(localized: "Copy"),
                         systemImage: "doc.on.doc",
@@ -159,13 +178,14 @@ private struct QuickAccessPreviewView: View {
                     )
                     .keyboardShortcut("s", modifiers: .command)
 
-                    previewActionButton(
-                        title: String(localized: "Delete"),
-                        systemImage: "trash",
-                        isDestructive: true,
-                        action: onDelete
-                    )
-                    .keyboardShortcut(.delete, modifiers: [])
+                    if let onPin {
+                        previewActionButton(
+                            title: String(localized: "Pin"),
+                            systemImage: "pin",
+                            action: onPin
+                        )
+                        .keyboardShortcut("p", modifiers: .command)
+                    }
 
                     previewActionButton(
                         title: String(localized: "Share"),
@@ -173,6 +193,14 @@ private struct QuickAccessPreviewView: View {
                         action: onShare
                     )
                     .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                    previewActionButton(
+                        title: String(localized: "Delete"),
+                        systemImage: "trash",
+                        isDestructive: true,
+                        action: onDelete
+                    )
+                    .keyboardShortcut(.delete, modifiers: [])
                 }
             }
             .padding(.horizontal, 16)

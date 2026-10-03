@@ -38,7 +38,7 @@ struct QuickAccessView: View {
     @FocusState private var isFocused: Bool
 
     private enum ToolbarAction: Hashable {
-        case copy, save, share, delete, pin
+        case annotate, copy, save, share, delete, pin
         case copyPath, duplicate, showInFinder, ocr, translate, upload
     }
 
@@ -207,6 +207,7 @@ struct QuickAccessView: View {
     private var hoveredShortcutKey: String? {
         guard let action = hoveredAction else { return nil }
         switch action {
+        case .annotate:  return "⌘E"
         case .copy:      return "⌘C"
         case .save:      return "⌘S"
         case .share:     return "⌘⇧I"
@@ -236,6 +237,7 @@ struct QuickAccessView: View {
 
     private var primaryToolbar: some View {
         Group {
+            toolButton(.annotate, icon: "pencil.tip.crop.circle", action: onAnnotate)
             toolButton(.copy, icon: "doc.on.doc", action: onCopy)
             toolButton(.save, icon: "square.and.arrow.down", action: onSave)
             toolButton(.delete, icon: "trash", action: onDelete)
@@ -306,6 +308,7 @@ struct QuickAccessView: View {
 
     private func shortcut(for kind: ToolbarAction) -> (key: KeyEquivalent, modifiers: EventModifiers)? {
         switch kind {
+        case .annotate:  return ("e", [.command])
         case .copy:      return ("c", [.command])
         case .save:      return ("s", [.command])
         case .share:     return ("i", [.command, .shift])
@@ -326,6 +329,7 @@ struct QuickAccessView: View {
 
     private func label(_ kind: ToolbarAction) -> String {
         switch kind {
+        case .annotate: return String(localized: "Edit")
         case .copy: return String(localized: "Copy")
         case .save: return String(localized: "Save")
         case .share: return String(localized: "Share")
@@ -342,6 +346,7 @@ struct QuickAccessView: View {
 
     private func hintForAccessibility(_ kind: ToolbarAction) -> String {
         switch kind {
+        case .annotate: return String(localized: "Annotate screenshot")
         case .copy: return String(localized: "Copy to clipboard")
         case .save: return String(localized: "Save screenshot")
         case .share: return String(localized: "Share to other apps")
