@@ -1649,8 +1649,15 @@ final class CaptureCoordinator {
         window.onAnnotate = { [weak self, weak window] in
             guard let self, let window else { return }
             let anchor = window.targetScreen
-            self.dismissQuickAccessWindow(window)
-            self.openAnnotationEditor(result, anchorScreen: anchor, historyEntryID: entryID)
+            window.setTemporarilyHidden(true)
+            self.openAnnotationEditor(
+                result,
+                anchorScreen: anchor,
+                historyEntryID: entryID,
+                sourceQuickAccess: window,
+                clipboardBackup: clipboardBackup,
+                autoSavedURL: autoSavedURL
+            )
         }
         window.onPreview = { [weak self, weak window] in
             guard let self, let window else { return }
@@ -1732,19 +1739,26 @@ final class CaptureCoordinator {
         sourceQuickAccess: QuickAccessWindow?
     ) {
         quickAccessPreviewWindow?.close()
+        sourceQuickAccess?.setTemporarilyHidden(true)
         let previewWindow = QuickAccessPreviewWindow(image: result.image, anchorScreen: anchorScreen)
         previewWindow.onAnnotate = { [weak self, weak previewWindow, weak sourceQuickAccess] in
             guard let self, let previewWindow else { return }
             let anchor = previewWindow.screen
+            previewWindow.shouldRestoreSourceOnClose = false
             previewWindow.close()
-            if let sourceQuickAccess {
-                self.dismissQuickAccessWindow(sourceQuickAccess)
-            }
-            self.openAnnotationEditor(result, anchorScreen: anchor, historyEntryID: entryID)
+            self.openAnnotationEditor(
+                result,
+                anchorScreen: anchor,
+                historyEntryID: entryID,
+                sourceQuickAccess: sourceQuickAccess,
+                clipboardBackup: clipboardBackup,
+                autoSavedURL: autoSavedURL
+            )
         }
         previewWindow.onPin = { [weak self, weak previewWindow, weak sourceQuickAccess] in
             guard let self, let previewWindow else { return }
             let anchor = previewWindow.frame
+            previewWindow.shouldRestoreSourceOnClose = false
             previewWindow.close()
             if let sourceQuickAccess {
                 self.dismissQuickAccessWindow(sourceQuickAccess)
@@ -1767,6 +1781,7 @@ final class CaptureCoordinator {
                 clipboardBackup: clipboardBackup,
                 autoSavedURL: autoSavedURL
             )
+            previewWindow?.shouldRestoreSourceOnClose = false
             previewWindow?.close()
             if let sourceQuickAccess {
                 self.dismissQuickAccessWindow(sourceQuickAccess)
@@ -1784,6 +1799,7 @@ final class CaptureCoordinator {
         previewWindow.onOCR = { [weak self, weak previewWindow, weak sourceQuickAccess] in
             guard let self, let previewWindow else { return }
             let anchor = previewWindow.screen
+            previewWindow.shouldRestoreSourceOnClose = false
             previewWindow.close()
             sourceQuickAccess.map { self.dismissQuickAccessWindow($0) }
             self.ocrCoordinator?.startVisualOCR(image: result.image, anchorScreen: anchor)
@@ -1791,6 +1807,7 @@ final class CaptureCoordinator {
         previewWindow.onTranslate = { [weak self, weak previewWindow, weak sourceQuickAccess] in
             guard let self, let previewWindow else { return }
             let anchor = previewWindow.screen
+            previewWindow.shouldRestoreSourceOnClose = false
             previewWindow.close()
             sourceQuickAccess.map { self.dismissQuickAccessWindow($0) }
             self.translationCoordinator?.translate(image: result.image, anchorScreen: anchor)
@@ -1799,9 +1816,22 @@ final class CaptureCoordinator {
             guard let self, let coord = self.shareCoordinator else { return }
             Task { await self.performShareAfterCapture(result: result, entryID: entryID, coord: coord) }
         }
-        previewWindow.onClose = { [weak self, weak previewWindow] in
+        previewWindow.onClose = { [weak self, weak previewWindow, weak sourceQuickAccess] in
             guard let self, self.quickAccessPreviewWindow === previewWindow else { return }
             self.quickAccessPreviewWindow = nil
+            if previewWindow?.shouldRestoreSourceOnClose == true {
+                if let source = sourceQuickAccess, self.quickAccessWindows.contains(where: { $0 === source }) {
+                    source.setTemporarilyHidden(false)
+                    self.restackQuickAccessWindows()
+                } else if self.settings.screenshotShowPreview {
+                    self.showQuickAccess(
+                        for: result,
+                        entryID: entryID,
+                        clipboardBackup: clipboardBackup,
+                        autoSavedURL: autoSavedURL
+                    )
+                }
+            }
         }
         quickAccessPreviewWindow = previewWindow
         previewWindow.show()
@@ -1841,14 +1871,37 @@ final class CaptureCoordinator {
         }
     }
 
-    private func openAnnotationEditor(_ result: CaptureResult, anchorScreen: NSScreen? = nil, historyEntryID: UUID? = nil) {
+    private func openAnnotationEditor(
+        _ result: CaptureResult,
+        anchorScreen: NSScreen? = nil,
+        historyEntryID: UUID? = nil,
+        sourceQuickAccess: QuickAccessWindow? = nil,
+        clipboardBackup: ClipboardSnapshot? = nil,
+        autoSavedURL: URL? = nil
+    ) {
         openAnnotationEditor(
             image: result.image,
             anchorScreen: anchorScreen ?? screenFor(result: result),
             sourceAppName: result.appName,
             sourceWindowTitle: result.windowName,
             date: result.timestamp,
-            historyEntryID: historyEntryID
+            sidecar: nil,
+            historyEntryID: historyEntryID,
+            sourceQuickAccess: sourceQuickAccess,
+            onCloseWithoutSave: { [weak self, weak sourceQuickAccess] in
+                guard let self else { return }
+                if let source = sourceQuickAccess, self.quickAccessWindows.contains(where: { $0 === source }) {
+                    source.setTemporarilyHidden(false)
+                    self.restackQuickAccessWindows()
+                } else if self.settings.screenshotShowPreview {
+                    self.showQuickAccess(
+                        for: result,
+                        entryID: historyEntryID ?? UUID(),
+                        clipboardBackup: clipboardBackup,
+                        autoSavedURL: autoSavedURL
+                    )
+                }
+            }
         )
     }
 
@@ -1859,7 +1912,9 @@ final class CaptureCoordinator {
         sourceWindowTitle: String? = nil,
         date: Date = Date(),
         sidecar: AnnotationSidecar? = nil,
-        historyEntryID: UUID? = nil
+        historyEntryID: UUID? = nil,
+        sourceQuickAccess: QuickAccessWindow? = nil,
+        onCloseWithoutSave: (() -> Void)? = nil
     ) {
         let screen = anchorScreen ?? screenAtMouse() ?? NSScreen.main
         activeAnnotationHistoryEntryID = historyEntryID
@@ -1870,8 +1925,11 @@ final class CaptureCoordinator {
             image: image,
             sidecar: sidecar,
             anchorScreen: screen,
-            onSave: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
+            onSave: { [weak self, weak sourceQuickAccess] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
                 guard let self else { return }
+                if let sourceQuickAccess {
+                    self.dismissQuickAccessWindow(sourceQuickAccess)
+                }
                 let autoSavedURL = self.saveRenderedImageReturningURL(
                     rendered,
                     sourceAppName: sourceAppName,
@@ -1908,8 +1966,11 @@ final class CaptureCoordinator {
                     )
                 }
             },
-            onCopy: { [weak self] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
+            onCopy: { [weak self, weak sourceQuickAccess] (rendered: CGImage, source: CGImage, document: AnnotationDocument) in
                 guard let self else { return }
+                if let sourceQuickAccess {
+                    self.dismissQuickAccessWindow(sourceQuickAccess)
+                }
                 self.copyRenderedImage(rendered)
                 self.persistOpenAnnotation(
                     rendered: rendered,
@@ -1931,20 +1992,26 @@ final class CaptureCoordinator {
                     preferredEdge: .maxY
                 )
             },
-            onPin: { [weak self] (rendered: CGImage, anchor: CGRect?) in
-                self?.pinRenderedImage(
+            onPin: { [weak self, weak sourceQuickAccess] (rendered: CGImage, anchor: CGRect?) in
+                guard let self else { return }
+                if let sourceQuickAccess {
+                    self.dismissQuickAccessWindow(sourceQuickAccess)
+                }
+                self.pinRenderedImage(
                     rendered,
                     anchor: anchor,
                     sourceAppName: sourceAppName,
                     sourceWindowTitle: sourceWindowTitle,
                     date: date
                 )
-                self?.activeAnnotationHistoryEntryID = nil
-                self?.annotationWindow = nil
+                self.activeAnnotationHistoryEntryID = nil
+                self.annotationWindow = nil
             },
             onClose: { [weak self] in
-                self?.activeAnnotationHistoryEntryID = nil
-                self?.annotationWindow = nil
+                guard let self else { return }
+                self.activeAnnotationHistoryEntryID = nil
+                self.annotationWindow = nil
+                onCloseWithoutSave?()
             }
         )
         annotationWindow?.show()

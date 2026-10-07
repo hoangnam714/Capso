@@ -152,6 +152,7 @@ final class QuickAccessWindow: NSPanel {
             orderOut(nil)
         } else {
             guard !isVisible else { return }
+            alphaValue = 1
             orderFrontRegardless()
             scheduleAutoDismissIfNeeded()
         }

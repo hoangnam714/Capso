@@ -76,9 +76,13 @@ struct HistoryItemView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topTrailing) {
-                thumbnailView
-                    .frame(maxWidth: .infinity)
+                // Fixed 16:10 thumbnail container to guarantee equal height across all items
+                Color.black.opacity(0.18)
                     .aspectRatio(16.0 / 10.0, contentMode: .fit)
+                    .overlay {
+                        thumbnailView
+                    }
+                    .clipped()
 
                 // Mode badge
                 let (label, color) = modeBadge
@@ -154,10 +158,13 @@ struct HistoryItemView: View {
                 }
                 .font(.system(size: 10.5))
                 .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
+            .frame(height: 44, alignment: .leading)
         }
         .background(
             isSelected
@@ -174,9 +181,14 @@ struct HistoryItemView: View {
                     lineWidth: isSelected ? 1.5 : 0.5
                 )
         )
-        .shadow(color: .black.opacity(isHovered || isSelected ? 0.2 : 0), radius: 8, y: 2)
-        .scaleEffect(isHovered && !isSelected ? 1.02 : 1.0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .shadow(
+            color: .black.opacity(isHovered ? 0.32 : (isSelected ? 0.22 : 0.08)),
+            radius: isHovered ? 12 : 6,
+            y: isHovered ? 5 : 2
+        )
+        .scaleEffect(isHovered ? 1.05 : 1.0)
+        .zIndex(isHovered ? 3 : (isSelected ? 1 : 0))
+        .animation(.easeOut(duration: 0.18), value: isHovered)
         .animation(.easeInOut(duration: 0.12), value: isSelected)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture {

@@ -186,6 +186,28 @@ mkdir -p "$STAGE_DIR"
 cp -R "$APP_SRC" "$STAGE_DIR/Capso.app"
 ln -s /Applications "$STAGE_DIR/Applications"
 
+if [[ -n "$IDENTITY" ]]; then
+  echo "→ Deep-signing embedded frameworks and app…"
+  sign_if_exists() {
+    local target="$1"
+    if [[ -e "$target" ]]; then
+      codesign --force --options runtime --timestamp --sign "$IDENTITY" "$target"
+    fi
+  }
+
+  sign_if_exists "$STAGE_DIR/Capso.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+  sign_if_exists "$STAGE_DIR/Capso.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+  sign_if_exists "$STAGE_DIR/Capso.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+  sign_if_exists "$STAGE_DIR/Capso.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+  sign_if_exists "$STAGE_DIR/Capso.app/Contents/Frameworks/Sparkle.framework"
+  sign_if_exists "$STAGE_DIR/Capso.app/Contents/Frameworks/libswiftCompatibilitySpan.dylib"
+
+  codesign --force --options runtime --timestamp \
+    --entitlements "$ROOT/App/Entitlements/Capso.entitlements" \
+    --sign "$IDENTITY" \
+    "$STAGE_DIR/Capso.app"
+fi
+
 echo "→ Creating ${DMG_NAME}…"
 rm -f "$DMG_PATH"
 hdiutil create \

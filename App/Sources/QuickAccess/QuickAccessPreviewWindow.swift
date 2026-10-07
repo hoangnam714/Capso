@@ -5,6 +5,7 @@ import SharedKit
 @MainActor
 final class QuickAccessPreviewWindow: NSPanel {
     var onClose: (() -> Void)?
+    var shouldRestoreSourceOnClose = true
     var onAnnotate: (() -> Void)?
     var onPin: (() -> Void)?
     var onCopy: (() -> Void)?
@@ -58,6 +59,7 @@ final class QuickAccessPreviewWindow: NSPanel {
         let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         let view = QuickAccessPreviewView(
             image: nsImage,
+            onClose: { [weak self] in self?.close() },
             onAnnotate: { [weak self] in self?.onAnnotate?() },
             onPin: { [weak self] in self?.onPin?() },
             onCopy: { [weak self] in self?.onCopy?() },
@@ -79,6 +81,10 @@ final class QuickAccessPreviewWindow: NSPanel {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    override func cancelOperation(_ sender: Any?) {
+        close()
+    }
+
     override func close() {
         onClose?()
         super.close()
@@ -87,6 +93,7 @@ final class QuickAccessPreviewWindow: NSPanel {
 
 private struct QuickAccessPreviewView: View {
     let image: NSImage
+    let onClose: () -> Void
     let onAnnotate: (() -> Void)?
     let onPin: (() -> Void)?
     let onCopy: () -> Void
@@ -208,9 +215,17 @@ private struct QuickAccessPreviewView: View {
             .background(.bar)
             .animation(.easeOut(duration: 0.18), value: showsAdvancedToolbar)
         }
+        .background(hiddenEscapeButton)
         .onModifierKeysChanged(mask: .option) { _, new in
             isOptionHeld = new.contains(.option)
         }
+    }
+
+    private var hiddenEscapeButton: some View {
+        Button("") { onClose() }
+            .keyboardShortcut(.cancelAction)
+            .opacity(0)
+            .frame(width: 0, height: 0)
     }
 
     private func previewActionButton(
