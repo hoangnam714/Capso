@@ -735,7 +735,7 @@ final class RecordingCoordinator {
                 recordingAreaSize: recordingAreaSize
             )
 
-            let coordinator = EditorCoordinator(project: project)
+            let coordinator = EditorCoordinator(project: project, settings: self.settings)
             coordinator.onClose = { [weak self] in
                 self?.editorWindow?.close()
                 self?.editorWindow = nil
@@ -778,7 +778,8 @@ final class RecordingCoordinator {
 
                 if let clipboardURL {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.writeObjects([clipboardURL as NSURL])
+                    let success = NSPasteboard.general.writeObjects([clipboardURL as NSURL])
+                    ToastWindow.showAction(success ? String(localized: "Copied to clipboard") : String(localized: "Copy failed"), at: .preview, settings: self.settings, success: success)
                     self.recordingPreviewWindow?.close()
                     self.recordingPreviewWindow = nil
                 } else {
@@ -811,6 +812,7 @@ final class RecordingCoordinator {
                 }
 
                 if result != nil {
+                    ToastWindow.showAction(String(localized: "Saved"), at: .preview, settings: self.settings)
                     self.recordingPreviewWindow?.close()
                     self.recordingPreviewWindow = nil
                 } else {
@@ -837,13 +839,22 @@ final class RecordingCoordinator {
 
         window.onDelete = { [weak self] in
             guard !state.isSaving else { return }
-            try? FileManager.default.removeItem(at: tempURL)
-            self?.recordingPreviewWindow?.close()
-            self?.recordingPreviewWindow = nil
+            guard let self else { return }
+            do {
+                try FileManager.default.removeItem(at: tempURL)
+                ToastWindow.showAction(String(localized: "Deleted"), at: .preview, settings: self.settings)
+            } catch {
+                ToastWindow.showAction(String(localized: "Could not delete recording"), at: .preview, settings: self.settings, success: false)
+                return
+            }
+            self.recordingPreviewWindow?.close()
+            self.recordingPreviewWindow = nil
         }
 
-        window.onCopyPath = {
+        window.onCopyPath = { [weak self] in
             ClipboardSnapshot.copyFilePath(tempURL)
+            guard let self else { return }
+            ToastWindow.showAction(String(localized: "Path copied"), at: .preview, settings: self.settings)
         }
 
         window.onShowInFinder = {
@@ -874,6 +885,8 @@ final class RecordingCoordinator {
                 state.progressLabel = String(localized: "Saving…")
                 if result == nil {
                     self.showRecordingSaveFailureAlert(format: format)
+                } else {
+                    ToastWindow.showAction(String(localized: "Duplicated"), at: .preview, settings: self.settings)
                 }
             }
         }

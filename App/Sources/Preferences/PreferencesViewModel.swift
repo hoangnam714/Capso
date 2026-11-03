@@ -34,6 +34,40 @@ final class PreferencesViewModel {
     }
 
     // MARK: General
+    var previewActionToastsEnabled: Bool {
+        get {
+            access(keyPath: \.previewActionToastsEnabled)
+            return settings.previewActionToastsEnabled
+        }
+        set {
+            withMutation(keyPath: \.previewActionToastsEnabled) {
+                settings.previewActionToastsEnabled = newValue
+            }
+        }
+    }
+    var historyActionToastsEnabled: Bool {
+        get {
+            access(keyPath: \.historyActionToastsEnabled)
+            return settings.historyActionToastsEnabled
+        }
+        set {
+            withMutation(keyPath: \.historyActionToastsEnabled) {
+                settings.historyActionToastsEnabled = newValue
+            }
+        }
+    }
+    var editorActionToastsEnabled: Bool {
+        get {
+            access(keyPath: \.editorActionToastsEnabled)
+            return settings.editorActionToastsEnabled
+        }
+        set {
+            withMutation(keyPath: \.editorActionToastsEnabled) {
+                settings.editorActionToastsEnabled = newValue
+            }
+        }
+    }
+
     var playShutterSound: Bool {
         get {
             access(keyPath: \.playShutterSound)

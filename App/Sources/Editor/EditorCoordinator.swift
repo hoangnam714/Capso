@@ -12,6 +12,7 @@ final class EditorCoordinator {
 
     // MARK: - Project
 
+    let settings: AppSettings
     var project: RecordingProject
 
     // MARK: - Playback
@@ -44,7 +45,8 @@ final class EditorCoordinator {
 
     // MARK: - Init
 
-    init(project: RecordingProject) {
+    init(project: RecordingProject, settings: AppSettings) {
+        self.settings = settings
         self.project = project
         let asset = AVURLAsset(url: project.sourceVideoURL)
         self.playerItem = AVPlayerItem(asset: asset)

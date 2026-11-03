@@ -286,8 +286,7 @@ struct HistoryItemView: View {
             .help(String(localized: "Save to…"))
             if let cloudURL = entry.cloudURL {
                 actionButton("link.icloud") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(cloudURL, forType: .string)
+                    coordinator.copyCloudLink(cloudURL)
                 }
                 .help(String(localized: "Copy Cloud Link"))
             } else if coordinator.shareCoordinator != nil {
@@ -308,8 +307,7 @@ struct HistoryItemView: View {
 
             if let cloudURL = entry.cloudURL {
                 Button(String(localized: "Copy Cloud Link")) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(cloudURL, forType: .string)
+                    coordinator.copyCloudLink(cloudURL)
                 }
             } else if coordinator.shareCoordinator != nil {
                 Button(String(localized: "Upload to Cloud")) {
@@ -448,8 +446,7 @@ struct HistoryItemView: View {
 
             if let cloudURL = entry.cloudURL {
                 Button(String(localized: "Copy Cloud Link")) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(cloudURL, forType: .string)
+                    coordinator.copyCloudLink(cloudURL)
                 }
             } else if coordinator.shareCoordinator != nil {
                 Button(String(localized: "Upload to Cloud")) {

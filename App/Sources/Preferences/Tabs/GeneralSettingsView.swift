@@ -43,6 +43,29 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            SettingGroup(title: "Show Toast Notifications") {
+                SettingCard {
+                    SettingRow(label: "Preview", sublabel: "Show small confirmations after actions in Preview") {
+                        Toggle("Preview", isOn: $viewModel.previewActionToastsEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                    SettingRow(label: "History", sublabel: "Show small confirmations after actions in History", showDivider: true) {
+                        Toggle("History", isOn: $viewModel.historyActionToastsEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                    SettingRow(label: "Edit View", sublabel: "Show small confirmations after actions in Edit View", showDivider: true) {
+                        Toggle("Edit View", isOn: $viewModel.editorActionToastsEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                }
+            }
+
             SettingGroup(title: "Sound") {
                 SettingCard {
                     SettingRow(label: "Shutter Sound", sublabel: "Play sound after capture") {

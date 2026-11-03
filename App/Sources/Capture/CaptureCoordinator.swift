@@ -1610,7 +1610,7 @@ final class CaptureCoordinator {
         // stack slot gets dismissed — not whichever one happens to be newest.
         window.onCopy = { [weak self, weak window] in
             guard let self, let window else { return }
-            self.copyImageToClipboard(result.image)
+            self.copyImageToClipboard(result.image, feedbackAt: .preview)
             self.dismissQuickAccessWindow(window)
         }
         window.onSave = { [weak self, weak window] in
@@ -1699,12 +1699,16 @@ final class CaptureCoordinator {
     }
 
     private func resolvedCaptureFileURL(result: CaptureResult, autoSavedURL: URL?) -> URL? {
-        autoSavedURL ?? saveImageToFileReturningURL(result)
+        if let autoSavedURL, FileManager.default.fileExists(atPath: autoSavedURL.path) {
+            return autoSavedURL
+        }
+        return saveImageToFileReturningURL(result)
     }
 
     private func copyCapturePath(result: CaptureResult, autoSavedURL: URL?) {
         guard let url = resolvedCaptureFileURL(result: result, autoSavedURL: autoSavedURL) else { return }
         ClipboardSnapshot.copyFilePath(url)
+        ToastWindow.showAction(String(localized: "Path copied"), at: .preview, settings: settings)
     }
 
     private func showCaptureInFinder(result: CaptureResult, autoSavedURL: URL?) {
@@ -1713,7 +1717,8 @@ final class CaptureCoordinator {
     }
 
     private func duplicateCapture(_ result: CaptureResult) {
-        _ = saveImageToFileReturningURL(result)
+        let success = saveImageToFileReturningURL(result) != nil
+        ToastWindow.showAction(success ? String(localized: "Duplicated") : String(localized: "Save failed"), at: .preview, settings: settings, success: success)
     }
 
     private func discardQuickAccessCapture(
@@ -1721,10 +1726,15 @@ final class CaptureCoordinator {
         clipboardBackup: ClipboardSnapshot?,
         autoSavedURL: URL?
     ) {
-        historyCoordinator?.discardCapture(id: entryID)
-        if let autoSavedURL {
-            try? FileManager.default.removeItem(at: autoSavedURL)
+        var success = historyCoordinator?.discardCapture(id: entryID) ?? true
+        if let autoSavedURL, FileManager.default.fileExists(atPath: autoSavedURL.path) {
+            do {
+                try FileManager.default.removeItem(at: autoSavedURL)
+            } catch {
+                success = false
+            }
         }
+        ToastWindow.showAction(success ? String(localized: "Deleted") : String(localized: "Could not delete capture"), at: .preview, settings: settings, success: success)
         if let clipboardBackup {
             clipboardBackup.restore()
         }
@@ -1766,7 +1776,7 @@ final class CaptureCoordinator {
             self.pinToScreen(result, anchor: anchor)
         }
         previewWindow.onCopy = { [weak self] in
-            self?.copyImageToClipboard(result.image)
+            self?.copyImageToClipboard(result.image, feedbackAt: .preview)
         }
         previewWindow.onSave = { [weak self] in
             self?.saveImageToFile(result)
@@ -2245,15 +2255,19 @@ final class CaptureCoordinator {
         controller.show()
     }
 
-    private func copyImageToClipboard(_ image: CGImage) {
+    private func copyImageToClipboard(_ image: CGImage, feedbackAt location: ToastWindow.ActionLocation? = nil) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-        pasteboard.writeObjects([nsImage])
+        let success = pasteboard.writeObjects([nsImage])
+        if let location {
+            ToastWindow.showAction(success ? String(localized: "Copied to clipboard") : String(localized: "Copy failed"), at: location, settings: settings, success: success)
+        }
     }
 
     private func saveImageToFile(_ result: CaptureResult) {
-        _ = saveImageToFileReturningURL(result)
+        let success = saveImageToFileReturningURL(result) != nil
+        ToastWindow.showAction(success ? String(localized: "Saved") : String(localized: "Save failed"), at: .preview, settings: settings, success: success)
     }
 
     @discardableResult
@@ -2330,12 +2344,14 @@ final class CaptureCoordinator {
         sourceWindowTitle: String? = nil,
         date: Date = Date()
     ) -> URL? {
-        saveImageToFileReturningURL(
+        let url = saveImageToFileReturningURL(
             image,
             sourceAppName: sourceAppName,
             sourceWindowTitle: sourceWindowTitle,
             date: date
         )
+        ToastWindow.showAction(url != nil ? String(localized: "Saved") : String(localized: "Save failed"), at: .editor, settings: settings, success: url != nil)
+        return url
     }
 
     private func saveRenderedImage(
@@ -2353,7 +2369,7 @@ final class CaptureCoordinator {
     }
 
     private func copyRenderedImage(_ image: CGImage) {
-        copyImageToClipboard(image)
+        copyImageToClipboard(image, feedbackAt: .editor)
     }
 
     // MARK: - Cloud Share Upload

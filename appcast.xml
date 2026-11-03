@@ -6,18 +6,18 @@
         <description>Capso updates from GitHub Releases</description>
         <language>en</language>
         <item>
-            <title>1.0.8</title>
-            <pubDate>Sun, 13 Sep 2026 09:03:15 +0000</pubDate>
-            <sparkle:version>11</sparkle:version>
-            <sparkle:shortVersionString>1.0.8</sparkle:shortVersionString>
+            <title>1.0.13</title>
+            <pubDate>Tue, 03 Nov 2026 03:06:58 +0000</pubDate>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>1.0.13</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <description><![CDATA[
-                <h2>Capso 1.0.8</h2>
-                <p>Build 11</p>
+                <h2>Capso 1.0.13</h2>
+                <p>Build 17</p>
             ]]></description>
             <enclosure
-                url="https://github.com/hoangnam714/Capso/releases/download/v1.0.8/Capso-1.0.8.dmg"
-                length="24570991"
+                url="https://github.com/hoangnam714/Capso/releases/download/v1.0.13/Capso-1.0.13.dmg"
+                length="25242306"
                 type="application/octet-stream"
             />
         </item>

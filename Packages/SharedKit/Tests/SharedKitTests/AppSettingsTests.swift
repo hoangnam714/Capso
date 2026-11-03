@@ -4,6 +4,30 @@ import Testing
 
 @Suite("AppSettings")
 struct AppSettingsTests {
+    @Test("Action toast preferences default on and persist independently")
+    func actionToastPreferences() {
+        let suite = "test.actionToasts.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.previewActionToastsEnabled)
+        #expect(settings.historyActionToastsEnabled)
+        #expect(settings.editorActionToastsEnabled)
+
+        settings.previewActionToastsEnabled = false
+        let reloaded = AppSettings(defaults: defaults)
+        #expect(!reloaded.previewActionToastsEnabled)
+        #expect(reloaded.historyActionToastsEnabled)
+        #expect(reloaded.editorActionToastsEnabled)
+
+        reloaded.historyActionToastsEnabled = false
+        reloaded.editorActionToastsEnabled = false
+        reloaded.previewActionToastsEnabled = true
+        #expect(settings.previewActionToastsEnabled)
+        #expect(!settings.historyActionToastsEnabled)
+        #expect(!settings.editorActionToastsEnabled)
+    }
+
     @Test("Default export location is Desktop")
     func defaultExportLocation() {
         let settings = AppSettings()

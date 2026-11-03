@@ -116,6 +116,7 @@ struct EditorPlaybackControls: View {
                     quality: .maximum,
                     destination: url
                 )
+                ToastWindow.showAction(String(localized: "Saved"), at: .editor, settings: coordinator.settings)
                 // Close the editor window on successful export
                 coordinator.closeEditor()
             } catch {
@@ -136,7 +137,9 @@ struct EditorPlaybackControls: View {
                     destination: tempURL
                 )
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([url as NSURL])
+                let success = NSPasteboard.general.writeObjects([url as NSURL])
+                ToastWindow.showAction(success ? String(localized: "Copied to clipboard") : String(localized: "Copy failed"), at: .editor, settings: coordinator.settings, success: success)
+                guard success else { return }
                 // Close the editor window on successful export
                 coordinator.closeEditor()
             } catch {

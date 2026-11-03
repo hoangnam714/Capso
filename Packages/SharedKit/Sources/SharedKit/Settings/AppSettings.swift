@@ -587,6 +587,23 @@ public final class AppSettings: @unchecked Sendable {
         return builtins + customCapturePresets
     }
 
+    // MARK: Action feedback
+
+    public var previewActionToastsEnabled: Bool {
+        get { defaults.object(forKey: "previewActionToastsEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "previewActionToastsEnabled") }
+    }
+
+    public var historyActionToastsEnabled: Bool {
+        get { defaults.object(forKey: "historyActionToastsEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "historyActionToastsEnabled") }
+    }
+
+    public var editorActionToastsEnabled: Bool {
+        get { defaults.object(forKey: "editorActionToastsEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "editorActionToastsEnabled") }
+    }
+
     // MARK: History
     public var historyEnabled: Bool {
         get { defaults.object(forKey: "historyEnabled") as? Bool ?? true }

@@ -29,6 +29,7 @@ final class HistoryCoordinator {
     weak var captureCoordinator: CaptureCoordinator?
     /// Entry IDs discarded from Quick Access before their async save finished.
     private var discardedEntryIDs: Set<UUID> = []
+    private var pendingEntryIDs: Set<UUID> = []
 
     private var historyWindow: HistoryWindow?
 
@@ -239,8 +240,15 @@ final class HistoryCoordinator {
 
         let entryDir = store.entriesDirectory.appendingPathComponent(entryID.uuidString, isDirectory: true)
         let fm = FileManager.default
+        pendingEntryIDs.insert(entryID)
 
         Task.detached(priority: .utility) {
+            defer {
+                Task { @MainActor in
+                    self.pendingEntryIDs.remove(entryID)
+                    self.discardedEntryIDs.remove(entryID)
+                }
+            }
             do {
                 try fm.createDirectory(at: entryDir, withIntermediateDirectories: true)
 
@@ -282,22 +290,17 @@ final class HistoryCoordinator {
                     fileSize: Int64(pngData.count)
                 )
 
-                let shouldDiscard = await MainActor.run {
+                let shouldDiscard = try await MainActor.run {
                     if self.discardedEntryIDs.contains(entryID) {
-                        self.discardedEntryIDs.remove(entryID)
                         return true
                     }
+                    try store.insert(entry)
+                    self.loadEntries()
                     return false
                 }
                 if shouldDiscard {
                     try? fm.removeItem(at: entryDir)
                     return
-                }
-
-                try store.insert(entry)
-
-                await MainActor.run {
-                    self.loadEntries()
                 }
             } catch {
                 print("Failed to save capture to history: \(error)")
@@ -314,8 +317,15 @@ final class HistoryCoordinator {
         let entryID = UUID()
         let entryDir = store.entriesDirectory.appendingPathComponent(entryID.uuidString, isDirectory: true)
         let fm = FileManager.default
+        pendingEntryIDs.insert(entryID)
 
         Task.detached(priority: .utility) {
+            defer {
+                Task { @MainActor in
+                    self.pendingEntryIDs.remove(entryID)
+                    self.discardedEntryIDs.remove(entryID)
+                }
+            }
             do {
                 try fm.createDirectory(at: entryDir, withIntermediateDirectories: true)
 
@@ -344,8 +354,15 @@ final class HistoryCoordinator {
                     fileSize: fileSize
                 )
 
-                try store.insert(entry)
-                await MainActor.run { self.loadEntries() }
+                let shouldDiscard = try await MainActor.run {
+                    if self.discardedEntryIDs.contains(entryID) { return true }
+                    try store.insert(entry)
+                    self.loadEntries()
+                    return false
+                }
+                if shouldDiscard {
+                    try? fm.removeItem(at: entryDir)
+                }
             } catch {
                 // Silently fail
             }
@@ -367,9 +384,13 @@ final class HistoryCoordinator {
 
     // MARK: - Actions
 
+    func showActionToast(_ message: String, success: Bool = true) {
+        ToastWindow.showAction(message, at: .history, settings: settings, success: success, screen: historyWindow?.nsWindow?.screen)
+    }
+
     func deleteEntry(_ entry: HistoryEntry) {
-        selectedIDs.remove(entry.id)
-        discardCapture(id: entry.id)
+        let success = discardCapture(id: entry.id)
+        showActionToast(success ? String(localized: "Deleted") : String(localized: "Could not delete capture"), success: success)
     }
 
     /// Deletes every currently selected entry.
@@ -382,43 +403,53 @@ final class HistoryCoordinator {
                     await deleteCloudCopy(for: entry)
                 }
             }
+            var succeeded = true
             for entry in targets {
-                discardedEntryIDs.insert(entry.id)
-                selectedIDs.remove(entry.id)
-                if let store {
-                    try? store.delete(id: entry.id)
-                    let entryDir = store.entriesDirectory
-                        .appendingPathComponent(entry.id.uuidString, isDirectory: true)
-                    try? FileManager.default.removeItem(at: entryDir)
-                }
+                if !discardCapture(id: entry.id, refresh: false) { succeeded = false }
             }
-            clearSelection()
             loadEntries()
+            showActionToast(succeeded ? String(localized: "Deleted") : String(localized: "Some items could not be deleted"), success: succeeded)
         }
     }
 
     /// Deletes a history capture by ID, including in-flight async saves.
-    func discardCapture(id: UUID) {
-        discardedEntryIDs.insert(id)
-        selectedIDs.remove(id)
-        guard let store else { return }
+    @discardableResult
+    func discardCapture(id: UUID, refresh: Bool = true) -> Bool {
+        guard let store else { return false }
         do {
             try store.delete(id: id)
         } catch {
             print("Failed to delete history entry \(id): \(error)")
+            return false
         }
+        if pendingEntryIDs.contains(id) {
+            discardedEntryIDs.insert(id)
+        }
+        selectedIDs.remove(id)
         let entryDir = store.entriesDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
-        try? FileManager.default.removeItem(at: entryDir)
-        loadEntries()
+        var success = true
+        if FileManager.default.fileExists(atPath: entryDir.path) {
+            do {
+                try FileManager.default.removeItem(at: entryDir)
+            } catch {
+                success = false
+                print("Failed to remove history files \(id): \(error)")
+            }
+        }
+        if refresh { loadEntries() }
+        return success
     }
 
     func clearAll() {
         guard let store else { return }
         do {
             try HistoryCleanup.clearAll(store: store)
+            discardedEntryIDs.formUnion(pendingEntryIDs)
+            showActionToast(String(localized: "History cleared"))
             clearSelection()
             loadEntries()
         } catch {
+            showActionToast(String(localized: "Could not clear history"), success: false)
             print("Failed to clear history: \(error)")
         }
     }
@@ -465,45 +496,20 @@ final class HistoryCoordinator {
 
     func copyEntriesToClipboard(_ entries: [HistoryEntry]) {
         guard !entries.isEmpty else { return }
+        let sourceURLs = entries.compactMap { fullImageURL(for: $0) }
+        guard sourceURLs.count == entries.count else {
+            showActionToast(String(localized: "Copy failed: source file not found"), success: false)
+            return
+        }
+        let screenshotsOnly = entries.allSatisfy { isScreenshot($0) }
+        let images = screenshotsOnly ? sourceURLs.compactMap { NSImage(contentsOf: $0) } : []
+        let objects: [NSPasteboardWriting] = screenshotsOnly && images.count == entries.count
+            ? images.map { $0 as NSPasteboardWriting }
+            : sourceURLs.map { $0 as NSURL as NSPasteboardWriting }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-
-        var images: [NSImage] = []
-        var fileURLs: [NSURL] = []
-
-        for entry in entries {
-            guard let sourceURL = fullImageURL(for: entry) else { continue }
-            switch entry.captureMode {
-            case .recording, .gif:
-                fileURLs.append(sourceURL as NSURL)
-            case .area, .fullscreen, .window:
-                if let nsImage = NSImage(contentsOf: sourceURL) {
-                    images.append(nsImage)
-                } else {
-                    fileURLs.append(sourceURL as NSURL)
-                }
-            }
-        }
-
-        if !images.isEmpty && fileURLs.isEmpty {
-            pasteboard.writeObjects(images)
-        } else if images.isEmpty && !fileURLs.isEmpty {
-            pasteboard.writeObjects(fileURLs)
-        } else if !images.isEmpty || !fileURLs.isEmpty {
-            // Mixed selection: put file URLs so Finder/apps can consume everything.
-            var allURLs = fileURLs
-            for (index, image) in images.enumerated() {
-                let temp = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("capso-history-\(index)-\(UUID().uuidString).png")
-                if let tiff = image.tiffRepresentation,
-                   let rep = NSBitmapImageRep(data: tiff),
-                   let png = rep.representation(using: .png, properties: [:]) {
-                    try? png.write(to: temp)
-                    allURLs.append(temp as NSURL)
-                }
-            }
-            pasteboard.writeObjects(allURLs)
-        }
+        let success = pasteboard.writeObjects(objects)
+        showActionToast(success ? String(localized: "Copied to clipboard") : String(localized: "Copy failed"), success: success)
     }
 
     func saveToFile(_ entry: HistoryEntry) {
@@ -551,7 +557,9 @@ final class HistoryCoordinator {
                         as: fileFormat,
                         exportQuality: exportQuality
                     )
+                    await self.showActionToast(String(localized: "Saved"))
                 } catch {
+                    await self.showActionToast(String(localized: "Save failed"), success: false)
                     print("Failed to save history entry to file: \(error)")
                 }
             }
@@ -569,9 +577,17 @@ final class HistoryCoordinator {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    func copyCloudLink(_ link: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let success = pasteboard.setString(link, forType: .string)
+        showActionToast(success ? String(localized: "Link copied") : String(localized: "Copy failed"), success: success)
+    }
+
     func copyPathToClipboard(_ entry: HistoryEntry) {
         guard let url = fullImageURL(for: entry) else { return }
         ClipboardSnapshot.copyFilePath(url)
+        showActionToast(String(localized: "Path copied"))
     }
 
     func openInAnnotation(_ entry: HistoryEntry) {

@@ -1,18 +1,64 @@
 // App/Sources/OCR/ToastWindow.swift
 import AppKit
-import SwiftUI
+import QuartzCore
+import SharedKit
 
 /// A reusable Liquid Glass toast notification that slides up from bottom-center.
 @MainActor
 final class ToastWindow: NSPanel {
     private var dismissTimer: Timer?
+    private static var actionToast: ToastWindow?
+
+    enum ActionLocation {
+        case preview, history, editor
+    }
+
+    static func showAction(
+        _ message: String,
+        at location: ActionLocation,
+        settings: AppSettings,
+        success: Bool = true,
+        screen: NSScreen? = nil
+    ) {
+        let enabled: Bool = switch location {
+        case .preview: settings.previewActionToastsEnabled
+        case .history: settings.historyActionToastsEnabled
+        case .editor: settings.editorActionToastsEnabled
+        }
+        guard enabled else { return }
+        actionToast?.dismissTimer?.invalidate()
+        actionToast?.orderOut(nil)
+        let toast = ToastWindow(
+            message: message,
+            icon: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill",
+            iconColor: success ? .systemGreen : .systemOrange,
+            screen: screen
+        )
+        actionToast = toast
+        toast.show()
+    }
 
     init(message: String, icon: String = "checkmark.circle.fill", iconColor: NSColor = .systemGreen, screen: NSScreen? = nil) {
-        let windowWidth: CGFloat = min(max(CGFloat(message.count) * 8 + 60, 220), 500)
-        let windowHeight: CGFloat = 44
+        let horizontalPadding: CGFloat = 12
+        let verticalPadding: CGFloat = 8
+        let iconSize: CGFloat = 14
+        let iconSpacing: CGFloat = 6
+        let label = NSTextField(labelWithString: message)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let targetScreen = screen ?? NSScreen.main ?? NSScreen.screens.first!
-        let screenFrame = targetScreen.visibleFrame
+        // Measure the actual text control, including its insets, rather than
+        // reserving a minimum width that leaves short messages mostly empty.
+        let textSize = label.fittingSize
+        let windowWidth = min(ceil(textSize.width) + horizontalPadding * 2 + iconSize + iconSpacing, 500)
+        let windowHeight = ceil(max(textSize.height, iconSize)) + verticalPadding * 2
+
+        let screenFrame = (screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 800, height: 600)
         let x = screenFrame.midX - windowWidth / 2
         let y = screenFrame.minY + 60
 
@@ -26,13 +72,42 @@ final class ToastWindow: NSPanel {
         self.level = .floating
         self.isOpaque = false
         self.backgroundColor = .clear
-        self.hasShadow = false
-        self.collectionBehavior = [.canJoinAllSpaces, .transient]
+        self.hasShadow = true
+        self.ignoresMouseEvents = true
+        self.isReleasedWhenClosed = false
+        self.hidesOnDeactivate = false
+        self.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary]
         self.isMovableByWindowBackground = false
         self.animationBehavior = .utilityWindow
 
-        let view = ToastView(message: message, icon: icon, iconColor: Color(nsColor: iconColor))
-        self.contentView = NSHostingView(rootView: view)
+        // This panel owns its size. Keep its content entirely in AppKit so a
+        // SwiftUI hosting view cannot resize it during the display constraint pass.
+        let background = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
+        background.material = .hudWindow
+        background.blendingMode = .behindWindow
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = windowHeight / 2
+        background.layer?.masksToBounds = true
+
+        let image = NSImageView()
+        image.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: iconSize, weight: .medium))
+        image.contentTintColor = iconColor
+        image.translatesAutoresizingMaskIntoConstraints = false
+
+        background.addSubview(image)
+        background.addSubview(label)
+        NSLayoutConstraint.activate([
+            image.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: horizontalPadding),
+            image.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+            image.widthAnchor.constraint(equalToConstant: iconSize),
+            image.heightAnchor.constraint(equalToConstant: iconSize),
+            label.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: iconSpacing),
+            label.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -horizontalPadding),
+            label.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+        ])
+        contentView = background
     }
 
     func show(autoDismissAfter: TimeInterval = 1.5) {
@@ -42,7 +117,8 @@ final class ToastWindow: NSPanel {
         setFrame(startFrame, display: false)
         alphaValue = 0
 
-        makeKeyAndOrderFront(nil)
+        dismissTimer?.invalidate()
+        orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.35
@@ -65,29 +141,12 @@ final class ToastWindow: NSPanel {
             ctx.duration = 0.25
             self.animator().alphaValue = 0
         }, completionHandler: {
-            self.orderOut(nil)
+            Task { @MainActor in
+                self.orderOut(nil)
+                if Self.actionToast === self {
+                    Self.actionToast = nil
+                }
+            }
         })
-    }
-}
-
-private struct ToastView: View {
-    let message: String
-    let icon: String
-    let iconColor: Color
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(iconColor)
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.primary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
     }
 }
