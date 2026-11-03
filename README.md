@@ -1,17 +1,10 @@
-<p align="right">
-  <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a>
-</p>
+
 
 # Capso
 
 **Open-source screenshot and screen recording for macOS.**
 
 A native, feature-rich alternative to CleanShot X. Built with Swift 6.0 and SwiftUI, targeting macOS 15.0+.
-
-[![macOS 15+](https://img.shields.io/badge/macOS-15.0%2B-blue)](https://www.apple.com/macos/)
-[![Swift 6.0](https://img.shields.io/badge/Swift-6.0-orange)](https://swift.org)
-[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-green.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/hoangnam714/Capso?style=social)](https://github.com/hoangnam714/Capso/stargazers)
 
 <p align="center">
   <a href="https://www.producthunt.com/products/capso?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_campaign=badge-capso" target="_blank" rel="noopener noreferrer"><img alt="Capso - Free open-source screenshot &amp; screen recorder for Mac | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1120330&theme=light&period=daily&t=1776201173308"></a>
